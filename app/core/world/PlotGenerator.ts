@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 import { BuildingFactory, type BuildingType } from "./BuildingFactory";
-
 import { Building } from "./Building";
 import { NatureManager } from "./NatureManager";
 
@@ -10,15 +9,12 @@ import { NatureManager } from "./NatureManager";
  * نوع ساختمان مسکونی.
  *
  * Villa و Apartment هر دو Residential هستند،
- * اما مدل و محیط اطراف آن‌ها متفاوت است.
+ * اما محیط و سطح اطراف آن‌ها متفاوت است.
  */
 export type ResidentialBuildingKind = "villa" | "apartment";
 
 /**
  * نوع کاربری واقعی Plot.
- *
- * PlotRole از BuildingType جدا است تا بتوانیم
- * رفتار محیطی هر Plot را مستقل کنترل کنیم.
  */
 export type PlotRole =
   | "villa"
@@ -39,7 +35,7 @@ type PlotSurfaceType = "grass" | "asphalt";
 type ParkingType = "apartment" | "commercial" | "hospital" | "industrial";
 
 /**
- * Loader مشترک برای Decorationها.
+ * Loader مشترک Decorationها.
  */
 const decorationLoader = new GLTFLoader();
 
@@ -50,16 +46,13 @@ const decorationCache = new Map<string, THREE.Object3D>();
 
 /**
  * Promiseهای Loading در حال اجرا.
- *
- * باعث می‌شود چند Plot همزمان یک فایل
- * یکسان را دوباره دانلود نکنند.
  */
 const decorationLoading = new Map<string, Promise<THREE.Object3D>>();
 
 /**
- * BuildingFactory مشترک.
+ * BuildingFactory مشترک بین تمام Plotها.
  *
- * Cache مدل‌های ساختمان بین تمام Plotها مشترک است.
+ * مدل‌ها داخل BuildingFactory cache می‌شوند.
  */
 const sharedBuildingFactory = new BuildingFactory();
 
@@ -68,12 +61,15 @@ const sharedBuildingFactory = new BuildingFactory();
  */
 export class PlotGenerator {
   /**
-   * شماره Plot.
+   * شماره Plot برای نام‌گذاری.
    */
   private plotIndex = 0;
 
   /**
    * ساختمان‌های ساخته‌شده.
+   *
+   * هر ساختمان به صورت مستقل نگهداری می‌شود
+   * تا بعداً امکان انتخاب/تعامل جداگانه داشته باشد.
    */
   private readonly buildings = new Set<Building>();
 
@@ -125,7 +121,7 @@ export class PlotGenerator {
     apartmentHasGreenArea = false,
   ): Promise<THREE.Group> {
     /**
-     * اگر Generator Dispose شده باشد،
+     * اگر Generator قبلاً Dispose شده باشد،
      * Plot خالی برمی‌گردانیم.
      */
     if (this.disposed) {
@@ -138,9 +134,7 @@ export class PlotGenerator {
      * تشخیص نوع Plot.
      */
     const isVilla = plotRole === "villa";
-
     const isApartment = plotRole === "apartment";
-
     const isPark = plotRole === "park";
 
     const isResidential = isVilla || isApartment;
@@ -238,8 +232,8 @@ export class PlotGenerator {
     );
 
     /**
-     * اگر در زمان Load، Generator
-     * Dispose شده باشد، ساختمان اضافه نمی‌شود.
+     * اگر هنگام Load، Generator Dispose شده باشد،
+     * ساختمان اضافه نمی‌شود.
      */
     if (this.disposed) {
       return plot;
@@ -248,20 +242,15 @@ export class PlotGenerator {
     /**
      * ساختمان در مرکز Plot قرار می‌گیرد.
      *
-     * مهم:
-     * خود ساختمان مستقل است.
+     * خود Building کاملاً مستقل است.
      */
     building.group.position.set(0, 0, 0);
 
     /**
-     * در حالت فعلی ساختمان را کج نمی‌کنیم.
+     * ساختمان را کج نمی‌کنیم.
      *
-     * rotation صفر باعث می‌شود ساختمان‌ها
-     * نسبت به خیابان صاف بمانند.
-     *
-     * اگر بعداً بخواهیم تنوع ایجاد کنیم،
-     * فقط خود Building را می‌چرخانیم،
-     * نه کل Plot و حصار را.
+     * چرخش Plot نیز نباید باعث کج‌شدن
+     * ساختمان نسبت به محوطه شود.
      */
     building.group.rotation.y = 0;
 
@@ -269,9 +258,7 @@ export class PlotGenerator {
      * Metadata ساختمان.
      */
     building.group.userData.isBuilding = true;
-
     building.group.userData.plotRole = plotRole;
-
     building.group.userData.isResidential = isResidential;
 
     /**
@@ -308,7 +295,7 @@ export class PlotGenerator {
     /**
      * جزئیات Villa.
      *
-     * بدون Parking و بدون Asphalt اضافه.
+     * بدون Parking و بدون Asphalt.
      */
     if (isVilla) {
       await this.createResidentialDetails(plot, width, depth);
@@ -375,10 +362,8 @@ export class PlotGenerator {
     surfaceType: PlotSurfaceType,
   ): void {
     /**
-     * فضای داخلی Plot.
-     *
-     * این مقدار باعث می‌شود سطح Plot
-     * به مرز پیاده‌رو نچسبد.
+     * این نوار برای جلوگیری از چسبیدن
+     * سطح Plot به خیابان استفاده می‌شود.
      */
     const sidewalkWidth = 1.2;
 
@@ -395,12 +380,6 @@ export class PlotGenerator {
 
     /**
      * رنگ سطح Plot.
-     *
-     * Grass:
-     * 0x88c273
-     *
-     * Asphalt:
-     * 0x3f4247
      */
     const material = new THREE.MeshStandardMaterial({
       color: isGrass ? 0x88c273 : 0x3f4247,
@@ -424,7 +403,7 @@ export class PlotGenerator {
   /**
    * ایجاد فضای سبز محدود Apartment.
    *
-   * سطح اصلی همچنان Asphalt است.
+   * سطح اصلی Apartment همچنان Asphalt است.
    */
   private createApartmentGreenArea(
     plot: THREE.Group,
@@ -446,8 +425,8 @@ export class PlotGenerator {
     const grass = new THREE.Mesh(geometry, material);
 
     /**
-     * کمی عقب‌تر قرار می‌گیرد
-     * تا Parking جلو دیده شود.
+     * فضای سبز کمی عقب‌تر است
+     * تا Parking جلوتر دیده شود.
      */
     grass.position.set(0, 0.16, -0.9);
 
@@ -463,7 +442,9 @@ export class PlotGenerator {
   /**
    * ایجاد Parking.
    *
-   * فقط خطوط هندسی سبک ایجاد می‌شود.
+   * فقط خطوط هندسی سبک ساخته می‌شوند.
+   *
+   * خود سطح Asphalt از PlotSurface می‌آید.
    */
   private createParkingDetails(
     plot: THREE.Group,
@@ -547,7 +528,7 @@ export class PlotGenerator {
     parkingGroup.add(endLine);
 
     /**
-     * جلوگیری از خارج شدن Parking
+     * جلوگیری از خروج Parking
      * از محدوده Plot.
      */
     parkingGroup.scale.x = Math.min(1, (width - 2) / Math.max(totalWidth, 1));
@@ -569,14 +550,8 @@ export class PlotGenerator {
     width: number,
     depth: number,
   ): Promise<void> {
-    /**
-     * مسیر ورودی Villa.
-     */
     await this.createPath(plot, width, depth);
 
-    /**
-     * حصار بوته‌ای.
-     */
     this.createVillaHedgeFence(plot, width, depth);
   }
 
@@ -585,14 +560,24 @@ export class PlotGenerator {
    *
    * نکته مهم:
    *
-   * حصار کاملاً داخل Plot ساخته می‌شود.
+   * سطح اصلی Plot دارای یک نوار
+   * 1.2 واحدی در اطراف خودش است.
    *
-   * حریم داخلی:
+   * بنابراین حصار را بر اساس
+   * محدوده واقعی سطح داخلی محاسبه می‌کنیم،
+   * نه لبه بیرونی Plot.
    *
-   * 1.25 واحد از لبه Plot
+   * نتیجه:
    *
-   * این فاصله باعث می‌شود حصار
-   * وارد پیاده‌رو نشود.
+   * Road
+   *   ↓
+   * Sidewalk
+   *   ↓
+   * Plot Surface
+   *   ↓
+   * Hedge Fence
+   *   ↓
+   * Villa
    */
   private createVillaHedgeFence(
     plot: THREE.Group,
@@ -604,13 +589,13 @@ export class PlotGenerator {
     fenceGroup.name = "VillaHedgeFence";
 
     /**
-     * ابعاد بوته‌ها.
+     * ابعاد هر قطعه Hedge.
      */
     const hedgeSize = 0.55;
     const hedgeHeight = 0.65;
 
     /**
-     * فاصله بین بوته‌ها.
+     * فاصله بین قطعات.
      */
     const spacing = 0.8;
 
@@ -633,37 +618,77 @@ export class PlotGenerator {
     );
 
     /**
-     * حریم امن داخلی Plot.
+     * عرض نوار پیاده‌رو داخل Plot.
      *
-     * این مقدار عمداً بزرگ‌تر از نسخه قبلی است.
+     * این مقدار با createPlotSurface
+     * یکسان است.
      */
-    const inset = 1.25;
-
-    const halfWidth = Math.max(0.5, width / 2 - inset);
-
-    const halfDepth = Math.max(0.5, depth / 2 - inset);
+    const sidewalkWidth = 1.2;
 
     /**
-     * ساخت یک ردیف حصار.
+     * فاصله واقعی حصار از لبه
+     * سطح داخلی Plot.
+     *
+     * مقدار کوچک است چون خود سطح
+     * قبلاً 1.2 واحد از لبه بیرونی فاصله دارد.
      */
-    const addHedgeRow = (
-      horizontal: boolean,
-      fixedPosition: number,
-      start: number,
-      end: number,
+    const fenceInset = 0.35;
+
+    /**
+     * محدوده واقعی سطح داخلی.
+     *
+     * مثال برای Plot 12×12:
+     *
+     * سطح داخلی = 9.6×9.6
+     * نیمه سطح = 4.8
+     *
+     * حصار در حدود ±4.45 قرار می‌گیرد.
+     */
+    const halfWidth = Math.max(0.5, width / 2 - sidewalkWidth - fenceInset);
+
+    const halfDepth = Math.max(0.5, depth / 2 - sidewalkWidth - fenceInset);
+
+    /**
+     * ساخت یک ردیف Hedge افقی.
+     */
+    const addHorizontalHedgeRow = (
+      z: number,
+      startX: number,
+      endX: number,
     ): void => {
-      if (end < start) {
+      if (endX < startX) {
         return;
       }
 
-      for (let position = start; position <= end; position += spacing) {
+      for (let x = startX; x <= endX; x += spacing) {
         const hedge = new THREE.Mesh(hedgeGeometry, hedgeMaterial);
 
-        if (horizontal) {
-          hedge.position.set(position, hedgeHeight / 2, fixedPosition);
-        } else {
-          hedge.position.set(fixedPosition, hedgeHeight / 2, position);
-        }
+        hedge.position.set(x, hedgeHeight / 2, z);
+
+        hedge.castShadow = false;
+        hedge.receiveShadow = true;
+        hedge.frustumCulled = true;
+
+        fenceGroup.add(hedge);
+      }
+    };
+
+    /**
+     * ساخت یک ردیف Hedge عمودی.
+     */
+    const addVerticalHedgeRow = (
+      x: number,
+      startZ: number,
+      endZ: number,
+    ): void => {
+      if (endZ < startZ) {
+        return;
+      }
+
+      for (let z = startZ; z <= endZ; z += spacing) {
+        const hedge = new THREE.Mesh(hedgeGeometry, hedgeMaterial);
+
+        hedge.position.set(x, hedgeHeight / 2, z);
 
         hedge.castShadow = false;
         hedge.receiveShadow = true;
@@ -676,36 +701,35 @@ export class PlotGenerator {
     /**
      * پشت Villa.
      */
-    addHedgeRow(true, -halfDepth, -halfWidth, halfWidth);
+    addHorizontalHedgeRow(-halfDepth, -halfWidth, halfWidth);
 
     /**
      * سمت چپ.
      */
-    addHedgeRow(false, -halfWidth, -halfDepth, halfDepth);
+    addVerticalHedgeRow(-halfWidth, -halfDepth, halfDepth);
 
     /**
      * سمت راست.
      */
-    addHedgeRow(false, halfWidth, -halfDepth, halfDepth);
+    addVerticalHedgeRow(halfWidth, -halfDepth, halfDepth);
 
     /**
      * جلوی Villa.
      *
-     * وسط کاملاً باز است
-     * تا ورودی دیده شود.
+     * وسط باز می‌ماند تا مسیر ورودی
+     * به خانه مشخص باشد.
      */
     const entranceGap = 2.4;
 
-    addHedgeRow(true, halfDepth, -halfWidth, -entranceGap);
+    addHorizontalHedgeRow(halfDepth, -halfWidth, -entranceGap);
 
-    addHedgeRow(true, halfDepth, entranceGap, halfWidth);
+    addHorizontalHedgeRow(halfDepth, entranceGap, halfWidth);
 
     /**
-     * حصار عمداً rotation نمی‌گیرد.
+     * حصار صاف باقی می‌ماند.
      *
-     * چون Plotها فعلاً صاف هستند و
-     * نمی‌خواهیم حصار باعث کج دیده شدن
-     * محوطه شود.
+     * چون CityBlock فعلاً از
+     * Rotationهای قائم استفاده می‌کند.
      */
     fenceGroup.rotation.y = 0;
 
@@ -715,10 +739,10 @@ export class PlotGenerator {
   }
 
   /**
-   * ایجاد حصار Apartment.
+   * ایجاد حصار کوتاه Apartment.
    *
-   * حصار کوتاه است و فضای کافی برای
-   * Parking و ورودی باقی می‌گذارد.
+   * حصار داخل محدوده سطح Plot قرار می‌گیرد
+   * و وارد نوار پیاده‌رو نمی‌شود.
    */
   private createApartmentFence(
     plot: THREE.Group,
@@ -730,21 +754,35 @@ export class PlotGenerator {
     fenceGroup.name = "ApartmentShortFence";
 
     /**
-     * فعلاً حصار فلزی.
+     * نوع حصار.
+     *
+     * فعلاً فلزی است.
      */
     const useMetalFence = true;
 
     /**
-     * ابعاد پایه‌ها.
+     * ارتفاع پایه.
      */
     const postHeight = 0.65;
+
+    /**
+     * عرض پایه.
+     */
     const postWidth = 0.08;
+
+    /**
+     * ابعاد ریل.
+     */
     const railHeight = 0.06;
     const railDepth = 0.06;
+
+    /**
+     * فاصله پایه‌ها.
+     */
     const spacing = 0.7;
 
     /**
-     * Material.
+     * Material مشترک.
      */
     const fenceMaterial = new THREE.MeshStandardMaterial({
       color: useMetalFence ? 0x555b5e : 0x8a633f,
@@ -780,16 +818,24 @@ export class PlotGenerator {
     );
 
     /**
-     * حریم داخلی Apartment.
-     *
-     * این مقدار باعث می‌شود حصار
-     * از پیاده‌رو فاصله داشته باشد.
+     * نوار پیاده‌رو داخل Plot.
      */
-    const inset = 1.35;
+    const sidewalkWidth = 1.2;
 
-    const halfWidth = Math.max(0.5, width / 2 - inset);
+    /**
+     * فاصله حصار از لبه سطح داخلی.
+     *
+     * کمی بیشتر از Villa است تا
+     * Apartment فضای تنفس بیشتری داشته باشد.
+     */
+    const fenceInset = 0.45;
 
-    const halfDepth = Math.max(0.5, depth / 2 - inset);
+    /**
+     * محدوده داخلی واقعی حصار.
+     */
+    const halfWidth = Math.max(0.5, width / 2 - sidewalkWidth - fenceInset);
+
+    const halfDepth = Math.max(0.5, depth / 2 - sidewalkWidth - fenceInset);
 
     /**
      * ساخت ضلع افقی.
@@ -817,6 +863,9 @@ export class PlotGenerator {
 
       fenceGroup.add(rail);
 
+      /**
+       * پایه‌های عمودی.
+       */
       for (let x = startX; x <= endX; x += spacing) {
         const post = new THREE.Mesh(postGeometry, fenceMaterial);
 
@@ -858,6 +907,9 @@ export class PlotGenerator {
 
       fenceGroup.add(rail);
 
+      /**
+       * پایه‌های عمودی.
+       */
       for (let z = startZ; z <= endZ; z += spacing) {
         const post = new THREE.Mesh(verticalRailGeometry, fenceMaterial);
 
@@ -898,7 +950,7 @@ export class PlotGenerator {
     addHorizontalFence(halfDepth, entranceGap, halfWidth);
 
     /**
-     * فعلاً حصار صاف است.
+     * حصار صاف باقی می‌ماند.
      */
     fenceGroup.rotation.y = 0;
 
@@ -942,7 +994,7 @@ export class PlotGenerator {
    */
   private async loadDecoration(path: string): Promise<THREE.Object3D> {
     /**
-     * Cache.
+     * بررسی Cache.
      */
     const cached = decorationCache.get(path);
 
@@ -951,7 +1003,7 @@ export class PlotGenerator {
     }
 
     /**
-     * Loading قبلی.
+     * بررسی Loading قبلی.
      */
     const existingLoading = decorationLoading.get(path);
 
@@ -960,7 +1012,7 @@ export class PlotGenerator {
     }
 
     /**
-     * شروع Load.
+     * شروع Loading.
      */
     const loadingPromise = new Promise<THREE.Object3D>((resolve, reject) => {
       decorationLoader.load(
@@ -969,7 +1021,7 @@ export class PlotGenerator {
           const model = gltf.scene;
 
           /**
-           * تنظیمات مشترک Decoration.
+           * تنظیمات مشترک مدل.
            */
           model.traverse((object) => {
             if (object instanceof THREE.Mesh) {
@@ -1003,9 +1055,6 @@ export class PlotGenerator {
 
   /**
    * ایجاد مسیر Villa.
-   *
-   * مسیر هم داخل محدوده Plot قرار دارد
-   * و نباید وارد خیابان شود.
    */
   private async createPath(
     plot: THREE.Group,
@@ -1021,12 +1070,12 @@ export class PlotGenerator {
     const model = await this.loadDecoration(depth > 10 ? longPath : shortPath);
 
     /**
-     * Clone فقط hierarchy را می‌سازد.
+     * Clone مدل برای Plot فعلی.
      */
     const path = model.clone(true);
 
     /**
-     * مسیر از لبه Plot فاصله دارد.
+     * مسیر در قسمت جلویی محوطه قرار می‌گیرد.
      */
     path.position.set(0, 0.03, depth / 2 - 2.2);
 
@@ -1041,10 +1090,9 @@ export class PlotGenerator {
   }
 
   /**
-   * این متد برای سازگاری با API قبلی
-   * نگه داشته شده است.
+   * API قبلی برای سازگاری نگه داشته شده است.
    *
-   * حصار Villa اکنون با Geometry ساخته می‌شود.
+   * در حال حاضر حصار Villa را ایجاد می‌کند.
    */
   private async createFence(
     plot: THREE.Group,
@@ -1057,6 +1105,8 @@ export class PlotGenerator {
 
   /**
    * Awning فروشگاه.
+   *
+   * فعلاً Placeholder است.
    */
   private async createAwning(
     plot: THREE.Group,
@@ -1070,6 +1120,8 @@ export class PlotGenerator {
 
   /**
    * Overhang فروشگاه.
+   *
+   * فعلاً Placeholder است.
    */
   private async createOverhang(
     plot: THREE.Group,
@@ -1083,6 +1135,8 @@ export class PlotGenerator {
 
   /**
    * Parasol فروشگاه.
+   *
+   * فعلاً Placeholder است.
    */
   private async createParasol(
     plot: THREE.Group,
@@ -1096,6 +1150,8 @@ export class PlotGenerator {
 
   /**
    * Chimney کارخانه.
+   *
+   * فعلاً Placeholder است.
    */
   private async createChimney(
     plot: THREE.Group,
@@ -1109,6 +1165,8 @@ export class PlotGenerator {
 
   /**
    * Tank کارخانه.
+   *
+   * فعلاً Placeholder است.
    */
   private async createTank(
     plot: THREE.Group,
@@ -1130,13 +1188,17 @@ export class PlotGenerator {
       return;
     }
 
+    /**
+     * در حال حاضر فقط ساختمان‌هایی که
+     * واقعاً Update دارند پردازش می‌شوند.
+     */
     for (const building of this.buildings) {
       building.update(deltaTime);
     }
   }
 
   /**
-   * Dispose.
+   * Dispose کردن Generator.
    */
   public dispose(): void {
     if (this.disposed) {
@@ -1147,6 +1209,10 @@ export class PlotGenerator {
 
     /**
      * ساختمان‌ها.
+     *
+     * منابع مشترک BuildingFactory
+     * در اینجا پاک نمی‌شوند، چون بین
+     * Chunkها مشترک هستند.
      */
     this.buildings.clear();
 

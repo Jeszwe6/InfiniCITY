@@ -1,67 +1,124 @@
-import * as THREE from "three";
-
 import { Road } from "./Road";
+
+/**
+ * ==========================================
+ * Road Direction
+ * ==========================================
+ *
+ * جهت قرارگیری Road در World.
+ *
+ * vertical:
+ *   امتداد اصلی روی محور Z
+ *
+ * horizontal:
+ *   امتداد اصلی روی محور X
+ */
+export type RoadDirection = "horizontal" | "vertical";
 
 /**
  * ==========================================
  * RoadGenerator
  * ==========================================
  *
- * مسئول ساخت خیابان‌های شهر است.
+ * مسئول ساخت Road های استاندارد شهر است.
  *
- * جهت‌ها:
+ * خروجی متدهای این کلاس خود Road است،
+ * نه THREE.Group.
  *
- * horizontal
- * → خیابان در امتداد محور X
+ * برای اضافه کردن Road به Scene باید از:
  *
- * vertical
- * → خیابان در امتداد محور Z
+ *     road.group
  *
- * نکته:
- * Road به صورت پیش‌فرض در امتداد Z ساخته می‌شود،
- * بنابراین برای horizontal آن را 90 درجه می‌چرخانیم.
- * ==========================================
+ * استفاده شود.
  */
-
-export type RoadDirection = "horizontal" | "vertical";
-
 export class RoadGenerator {
   /**
-   * ساخت خیابان
+   * ==========================================
+   * Create Road
+   * ==========================================
    *
-   * @param direction جهت خیابان
-   * @param length طول خیابان
+   * یک Road جدید با طول مشخص ایجاد می‌کند.
+   *
+   * Road در حالت پایه روی محور Z ساخته می‌شود.
    */
   public createRoad(
     direction: RoadDirection = "vertical",
     length: number = Road.LENGTH,
-  ): THREE.Group {
+  ): Road {
+    /**
+     * ساخت خود Road.
+     */
     const road = new Road(Road.WIDTH, length);
 
     /**
-     * Road به صورت پیش‌فرض روی محور Z است.
+     * ------------------------------------------
+     * Horizontal Rotation
+     * ------------------------------------------
      *
-     * برای تبدیل آن به خیابان افقی،
-     * حول محور Y به اندازه 90 درجه می‌چرخانیم.
+     * Road پایه در امتداد +Z است.
+     *
+     * با چرخش 90 درجه حول محور Y:
+     *
+     * +Z → +X
+     *
+     * تبدیل به Road افقی می‌شود.
      */
     if (direction === "horizontal") {
       road.group.rotation.y = Math.PI / 2;
     }
 
-    return road.group;
+    /**
+     * ------------------------------------------
+     * Road Metadata
+     * ------------------------------------------
+     *
+     * این Metadata برای سیستم‌هایی مثل:
+     *
+     * - World
+     * - CarManager
+     * - Raycaster
+     * - Debugging
+     *
+     * قابل استفاده است.
+     *
+     * Road خودش نیز isRoad و road را در
+     * constructor ثبت می‌کند، بنابراین اینجا
+     * فقط مقدار direction را اضافه می‌کنیم.
+     */
+    road.group.userData.isRoad = true;
+    road.group.userData.road = road;
+    road.group.userData.direction = direction;
+
+    /**
+     * ------------------------------------------
+     * Debug Name
+     * ------------------------------------------
+     */
+    road.group.name =
+      direction === "horizontal" ? "Road_Horizontal" : "Road_Vertical";
+
+    return road;
   }
 
   /**
-   * ساخت خیابان افقی
+   * ==========================================
+   * Create Horizontal Road
+   * ==========================================
+   *
+   * یک Road افقی ایجاد می‌کند.
    */
-  public createHorizontalRoad(length: number): THREE.Group {
+  public createHorizontalRoad(length: number = Road.LENGTH): Road {
     return this.createRoad("horizontal", length);
   }
 
   /**
-   * ساخت خیابان عمودی
+   * ==========================================
+   * Create Vertical Road
+   * ==========================================
+   *
+   * یک Road عمودی ایجاد می‌کند.
    */
-  public createVerticalRoad(length: number): THREE.Group {
+  public createVerticalRoad(length: number = Road.LENGTH): Road {
     return this.createRoad("vertical", length);
   }
 }

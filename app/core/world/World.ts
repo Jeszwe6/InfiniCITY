@@ -8,64 +8,83 @@ import { ChunkManager } from "./ChunkManager";
  * World
  * ==========================================
  *
- * مسئول مدیریت دنیای سه‌بعدی بازی است.
+ * World ریشه سیستم‌های اصلی محیط شهر است.
  *
- * ساختار:
+ * مسئولیت‌های World:
  *
- * World
- *  ├── Ground
- *  └── ChunkManager
- *       └── CityBlocks
+ * - Ground
+ * - ChunkManager
  *
- * World مسئول هماهنگ کردن اجزای اصلی دنیا است،
- * اما مدیریت Chunkها مستقیماً بر عهده ChunkManager است.
- * ==========================================
+ * Traffic / CarManager در Engine مدیریت می‌شود
+ * تا فقط یک CarManager در پروژه وجود داشته باشد.
  */
-
 export class World {
   /**
-   * گروه اصلی World
+   * ==========================================
+   * Group اصلی World
+   * ==========================================
+   *
+   * تمام اجزای محیط شهر زیر این Group قرار
+   * می‌گیرند.
    */
   public readonly group: THREE.Group;
 
   /**
-   * مدیر Chunkها
+   * ==========================================
+   * ChunkManager
+   * ==========================================
+   *
+   * مدیریت Chunkهای فعال شهر.
    */
   private readonly chunkManager: ChunkManager;
 
   /**
-   * زمین اصلی شهر
+   * ==========================================
+   * Ground
+   * ==========================================
    *
-   * Reference آن را نگه می‌داریم تا هنگام Dispose
-   * بتوانیم منابع GPU مربوط به Ground را آزاد کنیم.
+   * زمین اصلی شهر.
    */
   private readonly ground: Ground;
 
+  /**
+   * ==========================================
+   * Constructor
+   * ==========================================
+   */
   constructor() {
-    // ==========================================
-    // World Group
-    // ==========================================
-
+    /**
+     * ==========================================
+     * World Group
+     * ==========================================
+     *
+     * Group اصلی World ساخته می‌شود.
+     */
     this.group = new THREE.Group();
-
     this.group.name = "World";
 
-    // ==========================================
-    // Ground
-    // ==========================================
-
+    /**
+     * ==========================================
+     * Ground
+     * ==========================================
+     *
+     * Ground ابتدا ساخته شده و سپس به World
+     * اضافه می‌شود.
+     */
     this.ground = new Ground();
 
-    // اضافه کردن زمین به World
     this.add(this.ground.mesh);
 
-    // ==========================================
-    // Chunk Manager
-    // ==========================================
-
+    /**
+     * ==========================================
+     * ChunkManager
+     * ==========================================
+     *
+     * ساخت و مدیریت Chunkهای شهر توسط
+     * ChunkManager انجام می‌شود.
+     */
     this.chunkManager = new ChunkManager();
 
-    // اضافه کردن ChunkManager به World
     this.add(this.chunkManager.group);
   }
 
@@ -74,23 +93,30 @@ export class World {
    * Update
    * ==========================================
    *
-   * این متد در هر Frame توسط Engine صدا زده می‌شود.
+   * World در هر Frame به‌روزرسانی می‌شود.
    *
-   * cameraPosition:
-   * موقعیت فعلی دوربین
-   *
-   * cameraDistance:
-   * فاصله دوربین از Target
-   *
-   * deltaTime:
-   * زمان گذشته از Frame قبلی
+   * Traffic در اینجا Update نمی‌شود.
+   * CarManager اصلی توسط Engine مدیریت می‌شود.
    */
   public update(
     cameraPosition: THREE.Vector3,
     cameraDistance: number,
     deltaTime: number,
   ): void {
-    this.chunkManager.update(cameraPosition, cameraDistance, deltaTime);
+    /**
+     * ==========================================
+     * Update ChunkManager
+     * ==========================================
+     *
+     * ChunkManager بر اساس موقعیت و فاصله
+     * Camera تصمیم می‌گیرد چه بخش‌هایی از
+     * شهر باید ساخته یا فعال باشند.
+     */
+    this.chunkManager.update(
+      cameraPosition,
+      cameraDistance,
+      deltaTime,
+    );
   }
 
   /**
@@ -98,7 +124,7 @@ export class World {
    * Add
    * ==========================================
    *
-   * اضافه کردن Object به World
+   * اضافه کردن یک Object به World.
    */
   public add(object: THREE.Object3D): void {
     this.group.add(object);
@@ -109,7 +135,7 @@ export class World {
    * Remove
    * ==========================================
    *
-   * حذف Object از World
+   * حذف یک Object از World.
    */
   public remove(object: THREE.Object3D): void {
     this.group.remove(object);
@@ -120,13 +146,21 @@ export class World {
    * Clear
    * ==========================================
    *
-   * حذف تمام Objectهای داخل World.
+   * حذف Objectهای مستقیم داخل World.
    *
    * توجه:
-   * این متد منابع GPU را Dispose نمی‌کند.
-   * برای آزاد کردن منابع باید dispose() استفاده شود.
+   * این متد نباید برای مدیریت چرخه عمر
+   * Ground یا ChunkManager استفاده شود.
+   *
+   * برای آزاد کردن کامل منابع World،
+   * از dispose() استفاده می‌کنیم.
    */
   public clear(): void {
+    /**
+     * فقط Objectهای مستقیم را از Group جدا می‌کنیم.
+     *
+     * این متد عمداً منابع داخلی را dispose نمی‌کند.
+     */
     this.group.clear();
   }
 
@@ -135,32 +169,31 @@ export class World {
    * Dispose
    * ==========================================
    *
-   * آزاد کردن منابعی که World مالک آن‌هاست.
-   *
-   * ترتیب:
-   *
-   * 1. توقف و پاک‌سازی ChunkManager
-   * 2. آزاد کردن Ground
-   * 3. پاک کردن Group
-   * ==========================================
+   * آزاد کردن منابع World.
    */
   public dispose(): void {
-    // ------------------------------------------
-    // ChunkManager
-    // ------------------------------------------
-
+    /**
+     * ==========================================
+     * Dispose ChunkManager
+     * ==========================================
+     */
     this.chunkManager.dispose();
 
-    // ------------------------------------------
-    // Ground
-    // ------------------------------------------
-
+    /**
+     * ==========================================
+     * Dispose Ground
+     * ==========================================
+     */
     this.ground.dispose();
 
-    // ------------------------------------------
-    // World Group
-    // ------------------------------------------
-
+    /**
+     * ==========================================
+     * Clear World Group
+     * ==========================================
+     *
+     * بعد از آزاد کردن منابع، Objectهای
+     * باقی‌مانده از Group جدا می‌شوند.
+     */
     this.group.clear();
   }
 }

@@ -5,58 +5,46 @@ import * as THREE from "three";
  * Road
  * ==========================================
  *
- * یک قطعه خیابان مستقیم.
+ * Road مستقل برای سیستم شهر.
  *
- * جهت پایه Road:
- * محور Z
+ * مسئولیت‌ها:
  *
- * Width  → محور X
- * Length → محور Z
+ * - ساخت سطح خیابان
+ * - ساخت پیاده‌رو
+ * - ساخت خط‌کشی
+ * - تعریف Lane
+ * - ارائه Position و Direction
+ * - ارائه محدوده‌های لازم برای Traffic
  *
- * RoadGenerator می‌تواند Road را برای
- * خیابان افقی 90 درجه بچرخاند.
+ * جهت محلی Road همیشه روی محور +Z است.
  *
- * ==========================================
- *
- * امکانات:
- *
- * - Asphalt
- * - Sidewalk
- * - Center Line
- *
- * ==========================================
- *
- * نکته مهم:
- *
- * محدوده مرکزی Intersection در Road
- * نباید پیاده‌رو داشته باشد.
- *
- * بنابراین Sidewalk در دو طرف Intersection
- * به صورت Segment جداگانه ساخته می‌شود.
- *
- * ==========================================
- *
- * Performance:
- *
- * - Shared Materials
- * - Geometry Cache
- * - InstancedMesh برای Center Lines
- *
+ * پیاده‌روها فقط در دو طرف خیابان و قبل از
+ * محدوده‌ی چهارراه ساخته می‌شوند و وارد مرکز
+ * چهارراه نمی‌شوند.
  * ==========================================
  */
-
 export class Road {
-  /**
-   * عرض آسفالت.
-   */
   public static readonly WIDTH = 8;
+  public static readonly LENGTH = 32;
+
+  public static readonly LANE_COUNT = 2;
+  public static readonly LANE_WIDTH = 4;
+
+  public static readonly ASPHALT_HALF_WIDTH = Road.WIDTH / 2;
+
+  public static readonly LANE_OFFSET_NEGATIVE = -2;
+  public static readonly LANE_OFFSET_POSITIVE = 2;
+
+  public static readonly DRIVING_MIN = -Road.ASPHALT_HALF_WIDTH;
+
+  public static readonly DRIVING_MAX = Road.ASPHALT_HALF_WIDTH;
 
   /**
-   * طول Road.
-   *
-   * CityBlock = 32×32
+   * اندازه‌ی محدوده‌ی مرکزی چهارراه.
    */
-  public static readonly LENGTH = 32;
+  private static readonly INTERSECTION_SIZE = 8;
+
+  private static readonly INTERSECTION_LINE_PADDING = 1;
 
   /**
    * عرض پیاده‌رو.
@@ -68,45 +56,14 @@ export class Road {
    */
   private static readonly SIDEWALK_HEIGHT = 0.12;
 
-  /**
-   * اندازه Intersection.
-   *
-   * Intersection:
-   * -4 تا +4
-   */
-  private static readonly INTERSECTION_SIZE = 8;
-
-  /**
-   * فاصله خط وسط از Intersection.
-   */
-  private static readonly INTERSECTION_LINE_PADDING = 1;
-
-  /**
-   * ارتفاع سطح جاده.
-   */
   private static readonly ROAD_SURFACE_Y = 0.025;
 
-  /**
-   * ضخامت خط وسط.
-   */
+  private static readonly CENTER_LINE_LENGTH = 1.8;
+  private static readonly CENTER_LINE_GAP = 2.0;
   private static readonly CENTER_LINE_THICKNESS = 0.006;
 
-  /**
-   * ارتفاع خط وسط.
-   */
   private static readonly CENTER_LINE_Y =
     Road.ROAD_SURFACE_Y + Road.CENTER_LINE_THICKNESS / 2 + 0.0005;
-
-  /**
-   * Group اصلی Road.
-   */
-  public readonly group: THREE.Group;
-
-  /**
-   * مشخصات Road.
-   */
-  private readonly roadWidth: number;
-  private readonly roadLength: number;
 
   /**
    * ==========================================
@@ -122,7 +79,7 @@ export class Road {
 
   /**
    * ==========================================
-   * Geometry Cache
+   * Geometry Caches
    * ==========================================
    */
 
@@ -131,39 +88,36 @@ export class Road {
     THREE.PlaneGeometry
   >();
 
-  /**
-   * Geometry مربوط به Segmentهای پیاده‌رو.
-   *
-   * کل پیاده‌رو دیگر یک Geometry با طول 32 نیست.
-   *
-   * هر طرف Road شامل دو Segment است:
-   *
-   * - قبل از چهارراه
-   * - بعد از چهارراه
-   */
   private static readonly sidewalkGeometryCache = new Map<
     string,
     THREE.BoxGeometry
   >();
 
-  /**
-   * ==========================================
-   * Center Line Geometry
-   * ==========================================
-   */
-
-  /**
-   * Geometry مشترک Dashهای خط وسط.
-   *
-   * X = عرض خط
-   * Y = ضخامت
-   * Z = طول Dash
-   */
   private static readonly centerLineGeometry = new THREE.BoxGeometry(
     0.12,
     Road.CENTER_LINE_THICKNESS,
-    1.8,
+    Road.CENTER_LINE_LENGTH,
   );
+
+  /**
+   * ==========================================
+   * Instance Data
+   * ==========================================
+   */
+
+  public readonly group: THREE.Group;
+
+  private readonly roadWidth: number;
+  private readonly roadLength: number;
+
+  /**
+   * جهت محلی Road همیشه +Z است.
+   */
+  public readonly localDirection = new THREE.Vector3(0, 0, 1);
+
+  private readonly tempWorldOrigin = new THREE.Vector3();
+
+  private readonly tempWorldDirection = new THREE.Vector3();
 
   /**
    * ==========================================
@@ -172,28 +126,145 @@ export class Road {
    */
 
   constructor(width: number = Road.WIDTH, length: number = Road.LENGTH) {
+    if (!Number.isFinite(width) || width <= 0) {
+      throw new Error(`[Road] Invalid width: ${width}`);
+    }
+
+    if (!Number.isFinite(length) || length <= 0) {
+      throw new Error(`[Road] Invalid length: ${length}`);
+    }
+
     this.roadWidth = width;
     this.roadLength = length;
 
     this.group = new THREE.Group();
     this.group.name = "Road";
 
+    this.group.userData.isRoad = true;
+    this.group.userData.road = this;
+
     this.initializeMaterials();
-
-    /**
-     * آسفالت کل مسیر را پوشش می‌دهد.
-     */
     this.createRoadSurface();
-
-    /**
-     * پیاده‌رو فقط خارج از Intersection.
-     */
     this.createSidewalks();
-
-    /**
-     * خط وسط نیز خارج از Intersection.
-     */
     this.createRoadMarkings();
+  }
+
+  /**
+   * ==========================================
+   * Lane API
+   * ==========================================
+   */
+
+  public getLaneCount(): number {
+    return Road.LANE_COUNT;
+  }
+
+  public getLaneOffsets(): number[] {
+    return [Road.LANE_OFFSET_NEGATIVE, Road.LANE_OFFSET_POSITIVE];
+  }
+
+  public getLaneOffset(laneIndex: number): number {
+    if (
+      !Number.isInteger(laneIndex) ||
+      laneIndex < 0 ||
+      laneIndex >= Road.LANE_COUNT
+    ) {
+      throw new Error(`[Road] Invalid lane index: ${laneIndex}`);
+    }
+
+    return laneIndex === 0
+      ? Road.LANE_OFFSET_NEGATIVE
+      : Road.LANE_OFFSET_POSITIVE;
+  }
+
+  public getLanePosition(
+    laneIndex: number,
+    localDistance: number,
+  ): THREE.Vector3 {
+    return new THREE.Vector3(
+      this.getLaneOffset(laneIndex),
+      Road.ROAD_SURFACE_Y,
+      localDistance,
+    );
+  }
+
+  public getWorldLanePosition(
+    laneIndex: number,
+    localDistance: number,
+  ): THREE.Vector3 {
+    const position = this.getLanePosition(laneIndex, localDistance);
+
+    this.group.localToWorld(position);
+
+    return position;
+  }
+
+  /**
+   * ==========================================
+   * Direction
+   * ==========================================
+   */
+
+  public getLocalDirection(): THREE.Vector3 {
+    return this.localDirection.clone();
+  }
+
+  public getWorldDirection(): THREE.Vector3 {
+    this.tempWorldOrigin.set(0, 0, 0);
+
+    this.tempWorldDirection.copy(this.localDirection);
+
+    this.group.localToWorld(this.tempWorldOrigin);
+
+    this.group.localToWorld(this.tempWorldDirection);
+
+    this.tempWorldDirection.sub(this.tempWorldOrigin).normalize();
+
+    return this.tempWorldDirection.clone();
+  }
+
+  /**
+   * ==========================================
+   * Road Dimensions
+   * ==========================================
+   */
+
+  public getRoadWidth(): number {
+    return this.roadWidth;
+  }
+
+  public getDrivingMin(): number {
+    return -this.roadWidth / 2;
+  }
+
+  public getDrivingMax(): number {
+    return this.roadWidth / 2;
+  }
+
+  public getLongitudinalMin(): number {
+    return -this.roadLength / 2;
+  }
+
+  public getLongitudinalMax(): number {
+    return this.roadLength / 2;
+  }
+
+  public getRoadLength(): number {
+    return this.roadLength;
+  }
+
+  /**
+   * ==========================================
+   * Intersection Bounds
+   * ==========================================
+   */
+
+  public getIntersectionMin(): number {
+    return -Road.INTERSECTION_SIZE / 2;
+  }
+
+  public getIntersectionMax(): number {
+    return Road.INTERSECTION_SIZE / 2;
   }
 
   /**
@@ -203,428 +274,305 @@ export class Road {
    */
 
   private initializeMaterials(): void {
-    /**
-     * Asphalt
-     */
-    if (Road.roadMaterial === null) {
+    if (!Road.roadMaterial) {
       Road.roadMaterial = new THREE.MeshStandardMaterial({
-        color: 0x4f5153,
+        color: 0x3d3f42,
+        roughness: 0.92,
+        metalness: 0,
+      });
+    }
+
+    if (!Road.sidewalkMaterial) {
+      Road.sidewalkMaterial = new THREE.MeshStandardMaterial({
+        color: 0xa6a6a1,
         roughness: 0.95,
         metalness: 0,
       });
     }
 
-    /**
-     * Sidewalk
-     */
-    if (Road.sidewalkMaterial === null) {
-      Road.sidewalkMaterial = new THREE.MeshStandardMaterial({
-        color: 0xa5a7ab,
-        roughness: 1,
-        metalness: 0,
-      });
-    }
-
-    /**
-     * Road Markings
-     */
-    if (Road.markingMaterial === null) {
+    if (!Road.markingMaterial) {
       Road.markingMaterial = new THREE.MeshBasicMaterial({
-        color: 0xd9d9d9,
-        side: THREE.DoubleSide,
+        color: 0xf4f0d0,
       });
     }
   }
 
   /**
    * ==========================================
-   * Road Geometry
-   * ==========================================
-   */
-
-  private getRoadGeometry(): THREE.PlaneGeometry {
-    const key = `${this.roadWidth}_${this.roadLength}`;
-
-    const cached = Road.roadGeometryCache.get(key);
-
-    if (cached) {
-      return cached;
-    }
-
-    /**
-     * PlaneGeometry ابتدا روی XY ساخته می‌شود.
-     *
-     * سپس روی XZ قرار می‌گیرد.
-     */
-    const geometry = new THREE.PlaneGeometry(this.roadWidth, this.roadLength);
-
-    geometry.rotateX(-Math.PI / 2);
-
-    Road.roadGeometryCache.set(key, geometry);
-
-    return geometry;
-  }
-
-  /**
-   * ==========================================
-   * Asphalt
+   * Road Surface
    * ==========================================
    */
 
   private createRoadSurface(): void {
-    if (Road.roadMaterial === null) {
-      return;
+    const geometryKey = `${this.roadWidth}_${this.roadLength}`;
+
+    let geometry = Road.roadGeometryCache.get(geometryKey);
+
+    if (!geometry) {
+      geometry = new THREE.PlaneGeometry(this.roadWidth, this.roadLength);
+
+      geometry.rotateX(-Math.PI / 2);
+
+      Road.roadGeometryCache.set(geometryKey, geometry);
+    }
+
+    const mesh = new THREE.Mesh(geometry, Road.roadMaterial!);
+
+    mesh.name = "RoadSurface";
+
+    mesh.position.y = Road.ROAD_SURFACE_Y;
+
+    mesh.receiveShadow = false;
+    mesh.castShadow = false;
+    mesh.frustumCulled = true;
+
+    mesh.userData.isRoadSurface = true;
+    mesh.userData.road = this;
+
+    this.group.add(mesh);
+  }
+
+  /**
+   * ==========================================
+   * Sidewalks
+   * ==========================================
+   *
+   * پیاده‌روها روی لبه‌ی جاده قرار می‌گیرند.
+   *
+   * هر طرف Road دو قطعه دارد:
+   *
+   *       پیاده‌رو
+   * ────────────
+   *       جاده
+   * ────────────
+   *       پیاده‌رو
+   *
+   * و در محدوده‌ی چهارراه قطع می‌شوند.
+   *
+   * بنابراین پیاده‌رو:
+   *
+   * - روی خود Road قرار دارد
+   * - از دو طرف خیابان خارج نمی‌شود
+   * - وارد مرکز چهارراه نمی‌شود
+   * ==========================================
+   */
+
+  private createSidewalks(): void {
+    const intersectionMin = this.getIntersectionMin();
+
+    const intersectionMax = this.getIntersectionMax();
+
+    const roadMin = this.getLongitudinalMin();
+
+    const roadMax = this.getLongitudinalMax();
+
+    /**
+     * قسمت قبل از چهارراه.
+     */
+    const beforeLength = intersectionMin - roadMin;
+
+    if (beforeLength > 0) {
+      const beforeCenter = roadMin + beforeLength / 2;
+
+      this.createSidewalkSegment(
+        beforeCenter,
+        beforeLength,
+        "BeforeIntersection",
+      );
     }
 
     /**
-     * آسفالت کل Road ساخته می‌شود.
-     *
-     * این سطح شامل محدوده Intersection
-     * نیز هست و با سطح Intersection
-     * هم‌تراز می‌ماند.
+     * قسمت بعد از چهارراه.
      */
-    const road = new THREE.Mesh(this.getRoadGeometry(), Road.roadMaterial);
+    const afterLength = roadMax - intersectionMax;
 
-    road.position.y = Road.ROAD_SURFACE_Y;
+    if (afterLength > 0) {
+      const afterCenter = intersectionMax + afterLength / 2;
 
-    road.name = "RoadSurface";
+      this.createSidewalkSegment(afterCenter, afterLength, "AfterIntersection");
+    }
+  }
 
-    road.castShadow = false;
-    road.receiveShadow = false;
-    road.frustumCulled = true;
+  /**
+   * ==========================================
+   * Create Sidewalk Segment
+   * ==========================================
+   *
+   * یک قطعه پیاده‌رو در هر دو طرف Road می‌سازد.
+   *
+   * نکته:
+   *
+   * پیاده‌رو عملاً روی لبه‌ی آسفالت قرار می‌گیرد
+   * و بخش زیادی از عرض آن روی خود محدوده‌ی جاده
+   * قرار دارد تا ظاهر طبیعی‌تری ایجاد کند.
+   * ==========================================
+   */
 
-    this.group.add(road);
+  private createSidewalkSegment(
+    centerZ: number,
+    length: number,
+    suffix: string,
+  ): void {
+    if (length <= 0) {
+      return;
+    }
+
+    const geometry = this.getSidewalkGeometry(length);
+
+    const leftSidewalk = new THREE.Mesh(geometry, Road.sidewalkMaterial!);
+
+    const rightSidewalk = new THREE.Mesh(geometry, Road.sidewalkMaterial!);
+
+    leftSidewalk.name = `RoadSidewalk_Left_${suffix}`;
+
+    rightSidewalk.name = `RoadSidewalk_Right_${suffix}`;
+
+    /**
+     * پیاده‌روها کمی داخل محدوده‌ی Road قرار
+     * می‌گیرند تا روی لبه‌ی خیابان بنشینند.
+     *
+     * مرکز پیاده‌رو نسبت به مرکز Road:
+     *
+     * ±(WIDTH / 2 - WIDTH_SIDEWALK / 2)
+     */
+    const sidewalkOffset = this.roadWidth / 2 - Road.SIDEWALK_WIDTH / 2;
+
+    leftSidewalk.position.set(
+      -sidewalkOffset,
+      Road.SIDEWALK_HEIGHT / 2,
+      centerZ,
+    );
+
+    rightSidewalk.position.set(
+      sidewalkOffset,
+      Road.SIDEWALK_HEIGHT / 2,
+      centerZ,
+    );
+
+    leftSidewalk.castShadow = false;
+    leftSidewalk.receiveShadow = false;
+
+    rightSidewalk.castShadow = false;
+    rightSidewalk.receiveShadow = false;
+
+    leftSidewalk.frustumCulled = true;
+    rightSidewalk.frustumCulled = true;
+
+    leftSidewalk.userData.isSidewalk = true;
+    rightSidewalk.userData.isSidewalk = true;
+
+    leftSidewalk.userData.road = this;
+    rightSidewalk.userData.road = this;
+
+    this.group.add(leftSidewalk, rightSidewalk);
   }
 
   /**
    * ==========================================
    * Sidewalk Geometry
    * ==========================================
-   *
-   * Geometry مشترک برای Segment پیاده‌رو.
    */
 
-  private getSidewalkGeometry(segmentLength: number): THREE.BoxGeometry {
-    const key =
-      `${Road.SIDEWALK_WIDTH}_` +
-      `${Road.SIDEWALK_HEIGHT}_` +
-      `${segmentLength}`;
+  private getSidewalkGeometry(length: number): THREE.BoxGeometry {
+    const geometryKey = `${Road.SIDEWALK_WIDTH}_${Road.SIDEWALK_HEIGHT}_${length}`;
 
-    const cached = Road.sidewalkGeometryCache.get(key);
+    let geometry = Road.sidewalkGeometryCache.get(geometryKey);
 
-    if (cached) {
-      return cached;
+    if (!geometry) {
+      geometry = new THREE.BoxGeometry(
+        Road.SIDEWALK_WIDTH,
+        Road.SIDEWALK_HEIGHT,
+        length,
+      );
+
+      Road.sidewalkGeometryCache.set(geometryKey, geometry);
     }
-
-    const geometry = new THREE.BoxGeometry(
-      Road.SIDEWALK_WIDTH,
-      Road.SIDEWALK_HEIGHT,
-      segmentLength,
-    );
-
-    Road.sidewalkGeometryCache.set(key, geometry);
 
     return geometry;
   }
 
   /**
    * ==========================================
-   * Sidewalk
+   * Road Markings
    * ==========================================
-   *
-   * پیاده‌رو در محدوده Intersection
-   * ساخته نمی‌شود.
-   *
-   * برای Road طول 32 و Intersection
-   * به اندازه 8:
-   *
-   * Road:
-   *
-   * -16 ---------------- +16
-   *
-   * Intersection:
-   *
-   *       -4 ---- +4
-   *
-   * Sidewalk:
-   *
-   * -16 ---- -4    +4 ---- +16
-   *
-   * بنابراین مرکز چهارراه کاملاً
-   * بدون پیاده‌رو باقی می‌ماند.
    */
 
-  private createSidewalks(): void {
-    if (Road.sidewalkMaterial === null) {
+  private createRoadMarkings(): void {
+    const start = this.getLongitudinalMin() + Road.INTERSECTION_LINE_PADDING;
+
+    const end = this.getLongitudinalMax() - Road.INTERSECTION_LINE_PADDING;
+
+    const intersectionMin = this.getIntersectionMin();
+
+    const intersectionMax = this.getIntersectionMax();
+
+    this.createMarkingSegment(start, intersectionMin);
+
+    this.createMarkingSegment(intersectionMax, end);
+  }
+
+  private createMarkingSegment(start: number, end: number): void {
+    if (end <= start) {
       return;
     }
 
-    /**
-     * نصف طول Road.
-     */
-    const halfRoadLength = this.roadLength / 2;
+    const step = Road.CENTER_LINE_LENGTH + Road.CENTER_LINE_GAP;
 
-    /**
-     * نصف Intersection.
-     */
-    const halfIntersection = Road.INTERSECTION_SIZE / 2;
+    const halfLine = Road.CENTER_LINE_LENGTH / 2;
 
-    /**
-     * طول Segment پیاده‌رو قبل و بعد
-     * از Intersection.
-     */
-    const sidewalkSegmentLength = halfRoadLength - halfIntersection;
+    for (
+      let distance = start + halfLine;
+      distance <= end - halfLine;
+      distance += step
+    ) {
+      const line = new THREE.Mesh(
+        Road.centerLineGeometry,
+        Road.markingMaterial!,
+      );
 
-    /**
-     * اگر Road کوتاه‌تر از Intersection
-     * باشد، پیاده‌رو ساخته نمی‌شود.
-     */
-    if (sidewalkSegmentLength <= 0) {
-      return;
+      line.name = "RoadCenterLine";
+
+      line.position.set(0, Road.CENTER_LINE_Y, distance);
+
+      line.castShadow = false;
+      line.receiveShadow = false;
+      line.frustumCulled = true;
+
+      line.userData.isRoadMarking = true;
+
+      line.userData.road = this;
+
+      this.group.add(line);
     }
-
-    const geometry = this.getSidewalkGeometry(sidewalkSegmentLength);
-
-    /**
-     * موقعیت X پیاده‌روها.
-     */
-    const sidewalkX = this.roadWidth / 2 + Road.SIDEWALK_WIDTH / 2;
-
-    /**
-     * موقعیت Z دو Segment.
-     *
-     * Segment مثبت:
-     *
-     * +4 تا +16
-     *
-     * Segment منفی:
-     *
-     * -16 تا -4
-     */
-    const segmentOffset = halfIntersection + sidewalkSegmentLength / 2;
-
-    /**
-     * ==========================================================
-     * Right Sidewalk - Positive Z
-     * ==========================================================
-     */
-
-    const rightPositive = new THREE.Mesh(geometry, Road.sidewalkMaterial);
-
-    rightPositive.position.set(
-      sidewalkX,
-      Road.SIDEWALK_HEIGHT / 2,
-      segmentOffset,
-    );
-
-    rightPositive.name = "RightSidewalkPositive";
-
-    rightPositive.castShadow = false;
-    rightPositive.receiveShadow = false;
-    rightPositive.frustumCulled = true;
-
-    this.group.add(rightPositive);
-
-    /**
-     * ==========================================================
-     * Right Sidewalk - Negative Z
-     * ==========================================================
-     */
-
-    const rightNegative = new THREE.Mesh(geometry, Road.sidewalkMaterial);
-
-    rightNegative.position.set(
-      sidewalkX,
-      Road.SIDEWALK_HEIGHT / 2,
-      -segmentOffset,
-    );
-
-    rightNegative.name = "RightSidewalkNegative";
-
-    rightNegative.castShadow = false;
-    rightNegative.receiveShadow = false;
-    rightNegative.frustumCulled = true;
-
-    this.group.add(rightNegative);
-
-    /**
-     * ==========================================================
-     * Left Sidewalk - Positive Z
-     * ==========================================================
-     */
-
-    const leftPositive = new THREE.Mesh(geometry, Road.sidewalkMaterial);
-
-    leftPositive.position.set(
-      -sidewalkX,
-      Road.SIDEWALK_HEIGHT / 2,
-      segmentOffset,
-    );
-
-    leftPositive.name = "LeftSidewalkPositive";
-
-    leftPositive.castShadow = false;
-    leftPositive.receiveShadow = false;
-    leftPositive.frustumCulled = true;
-
-    this.group.add(leftPositive);
-
-    /**
-     * ==========================================================
-     * Left Sidewalk - Negative Z
-     * ==========================================================
-     */
-
-    const leftNegative = new THREE.Mesh(geometry, Road.sidewalkMaterial);
-
-    leftNegative.position.set(
-      -sidewalkX,
-      Road.SIDEWALK_HEIGHT / 2,
-      -segmentOffset,
-    );
-
-    leftNegative.name = "LeftSidewalkNegative";
-
-    leftNegative.castShadow = false;
-    leftNegative.receiveShadow = false;
-    leftNegative.frustumCulled = true;
-
-    this.group.add(leftNegative);
   }
 
   /**
    * ==========================================
-   * Center Line
+   * Traffic Helpers
    * ==========================================
-   *
-   * خط وسط خیابان.
-   *
-   * خط‌ها فقط خارج از Intersection
-   * ساخته می‌شوند.
    */
 
-  private createRoadMarkings(): void {
-    if (Road.markingMaterial === null) {
-      return;
-    }
-
-    /**
-     * طول هر Dash.
-     */
-    const lineLength = 1.8;
-
-    /**
-     * فاصله بین Dashها.
-     */
-    const gap = 2.0;
-
-    /**
-     * نصف Intersection.
-     */
-    const halfIntersection = Road.INTERSECTION_SIZE / 2;
-
-    /**
-     * فاصله ایمنی از Intersection.
-     */
-    const padding = Road.INTERSECTION_LINE_PADDING;
-
-    /**
-     * طول قابل استفاده در هر طرف.
-     */
-    const usableLength = this.roadLength / 2 - halfIntersection - padding;
-
-    /**
-     * تعداد Dashها.
-     */
-    const count = Math.floor((usableLength + gap) / (lineLength + gap));
-
-    if (count <= 0) {
-      return;
-    }
-
-    /**
-     * دو طرف Intersection.
-     */
-    const totalInstances = count * 2;
-
-    /**
-     * InstancedMesh.
-     */
-    const lines = new THREE.InstancedMesh(
-      Road.centerLineGeometry,
-      Road.markingMaterial,
-      totalInstances,
+  public isDistanceInsideRoad(distance: number): boolean {
+    return (
+      distance >= this.getLongitudinalMin() &&
+      distance <= this.getLongitudinalMax()
     );
+  }
 
-    lines.name = "CenterLines";
+  public isDistanceInsideIntersection(distance: number): boolean {
+    return (
+      distance >= this.getIntersectionMin() &&
+      distance <= this.getIntersectionMax()
+    );
+  }
 
-    lines.castShadow = false;
-    lines.receiveShadow = false;
-    lines.frustumCulled = true;
+  /**
+   * ==========================================
+   * Dispose
+   * ==========================================
+   */
 
-    /**
-     * Matrix مشترک.
-     */
-    const matrix = new THREE.Matrix4();
-
-    /**
-     * Quaternion خنثی.
-     */
-    const quaternion = new THREE.Quaternion();
-
-    /**
-     * Scale واقعی Geometry.
-     */
-    const scale = new THREE.Vector3(1, 1, 1);
-
-    let instanceIndex = 0;
-
-    /**
-     * ==========================================================
-     * Positive Z
-     * ==========================================================
-     */
-
-    for (let i = 0; i < count; i++) {
-      const distance =
-        halfIntersection + padding + lineLength / 2 + i * (lineLength + gap);
-
-      const position = new THREE.Vector3(0, Road.CENTER_LINE_Y, distance);
-
-      matrix.compose(position, quaternion, scale);
-
-      lines.setMatrixAt(instanceIndex, matrix);
-
-      instanceIndex++;
-    }
-
-    /**
-     * ==========================================================
-     * Negative Z
-     * ==========================================================
-     */
-
-    for (let i = 0; i < count; i++) {
-      const distance =
-        halfIntersection + padding + lineLength / 2 + i * (lineLength + gap);
-
-      const position = new THREE.Vector3(0, Road.CENTER_LINE_Y, -distance);
-
-      matrix.compose(position, quaternion, scale);
-
-      lines.setMatrixAt(instanceIndex, matrix);
-
-      instanceIndex++;
-    }
-
-    /**
-     * اعلام تغییر Matrixها.
-     */
-    lines.instanceMatrix.needsUpdate = true;
-
-    /**
-     * اضافه کردن خط وسط.
-     */
-    this.group.add(lines);
+  public dispose(): void {
+    this.group.clear();
   }
 }

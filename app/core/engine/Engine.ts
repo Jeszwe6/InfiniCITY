@@ -4,33 +4,24 @@ import { Scene } from "./Scene";
 import { Camera } from "./Camera";
 import { Renderer } from "./Renderer";
 import { CameraController } from "./CameraController";
+
 import { World } from "../world/World";
+import CarManager from "../world/CarManager";
+import { Road } from "../world/Road";
 
 /**
+ * ==========================================
  * Engine
+ * ==========================================
  *
- * هسته اصلی موتور Three.js.
+ * هسته اجرای بازی:
+ * - Scene / Camera / Renderer
+ * - World
+ * - CameraController
+ * - Traffic
  *
- * مسئول:
- * - ساخت Scene
- * - ساخت Camera
- * - ساخت Renderer
- * - ساخت CameraController
- * - ساخت World
- * - مدیریت Animation Loop
- * - مدیریت Delta Time
- * - مدیریت Resize
- *
- * Delta Time:
- * مدت زمانی است که از فریم قبلی تا فریم فعلی گذشته است.
- *
- * این مقدار بعداً برای:
- * - انیمیشن ساختمان‌ها
- * - حرکت آبجکت‌ها
- * - Animation
- * - سیستم‌های زمان‌محور
- *
- * استفاده خواهد شد.
+ * توجه:
+ * منطق Road، World، ChunkManager و جهت حرکت خودروها در این فایل تغییر داده نشده است.
  */
 export class Engine {
   public readonly scene: Scene;
@@ -38,179 +29,286 @@ export class Engine {
   public readonly renderer: Renderer;
   public readonly world: World;
 
-  // کنترل دوربین
+  private readonly carManager: CarManager;
   private readonly cameraController: CameraController;
-
-  // Clock مرکزی موتور
-  //
-  // تمام سیستم‌هایی که به زمان نیاز دارند
-  // باید از Delta Time همین Clock استفاده کنند.
   private readonly clock: THREE.Clock;
 
-  // شناسه Animation Frame
   private animationFrameId: number | null = null;
+  private trafficInitialized = false;
+  private trafficInitializing = false;
+  private registeredRoads: Road[] = [];
+  private disposed = false;
 
   constructor() {
-    // -----------------------------
-    // Clock
-    // -----------------------------
-
-    // Clock باید یک بار ساخته شود
-    // و در تمام طول عمر Engine استفاده شود.
     this.clock = new THREE.Clock();
 
-    // -----------------------------
-    // Scene
-    // -----------------------------
-
     this.scene = new Scene();
-
-    // -----------------------------
-    // World
-    // -----------------------------
-
     this.world = new World();
 
-    // اضافه کردن World به Scene
     this.scene.instance.add(this.world.group);
 
-    // -----------------------------
-    // Camera
-    // -----------------------------
+    this.camera = new Camera(
+      window.innerWidth / window.innerHeight,
+    );
 
-    this.camera = new Camera(window.innerWidth / window.innerHeight);
-
-    // -----------------------------
-    // Camera Controller
-    // -----------------------------
-
-    this.cameraController = new CameraController(this.camera.instance);
-
-    // -----------------------------
-    // Renderer
-    // -----------------------------
+    this.cameraController = new CameraController(
+      this.camera.instance,
+    );
 
     this.renderer = new Renderer();
+    this.carManager = new CarManager();
 
-    // گوش دادن به تغییر اندازه صفحه
     window.addEventListener("resize", this.handleResize);
   }
 
   /**
-   * شروع Animation Loop
+   * ==========================================
+   * Start
+   * ==========================================
    */
   public start(): void {
-    // اگر Loop از قبل فعال است،
-    // دوباره آن را شروع نکن.
-    if (this.animationFrameId !== null) {
+    if (
+      this.disposed ||
+      this.animationFrameId !== null
+    ) {
       return;
     }
 
-    // Clock را از ابتدا شروع می‌کنیم.
     this.clock.start();
-
     this.animate();
   }
 
   /**
-   * حلقه اصلی رندر
+   * ==========================================
+   * Initialize Traffic
+   * ==========================================
+   */
+  private async initializeTraffic(): Promise<void> {
+    if (
+      this.disposed ||
+      this.trafficInitialized ||
+      this.trafficInitializing
+    ) {
+      return;
+    }
+
+    const roads = this.collectRoads();
+
+    if (roads.length === 0) {
+      return;
+    }
+
+    this.trafficInitializing = true;
+
+    try {
+      await this.carManager.initialize(
+        this.scene.instance,
+      );
+
+      if (this.disposed) {
+        this.carManager.dispose();
+        return;
+      }
+
+      const currentRoads = this.collectRoads();
+
+      this.carManager.setRoadNetwork(
+        currentRoads,
+      );
+
+      this.registeredRoads = currentRoads;
+      this.trafficInitialized = true;
+    } finally {
+      this.trafficInitializing = false;
+    }
+  }
+
+  /**
+   * ==========================================
+   * Collect Roads
+   * ==========================================
+   */
+  private collectRoads(): Road[] {
+    const roads: Road[] = [];
+    const roadSet = new Set<Road>();
+
+    this.world.group.traverse((object) => {
+      if (object.userData.isRoad !== true) {
+        return;
+      }
+
+      const road = object.userData.road;
+
+      if (!(road instanceof Road)) {
+        return;
+      }
+
+      if (roadSet.has(road)) {
+        return;
+      }
+
+      roadSet.add(road);
+      roads.push(road);
+    });
+
+    return roads;
+  }
+
+  /**
+   * ==========================================
+   * Update Road Network
+   * ==========================================
+   */
+  private updateRoadNetwork(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (!this.trafficInitialized) {
+      void this.initializeTraffic();
+      return;
+    }
+
+    const currentRoads = this.collectRoads();
+
+    if (
+      currentRoads.length ===
+      this.registeredRoads.length
+    ) {
+      let networkChanged = false;
+
+      for (
+        let index = 0;
+        index < currentRoads.length;
+        index++
+      ) {
+        if (
+          currentRoads[index] !==
+          this.registeredRoads[index]
+        ) {
+          networkChanged = true;
+          break;
+        }
+      }
+
+      if (!networkChanged) {
+        return;
+      }
+    }
+
+    this.carManager.setRoadNetwork(
+      currentRoads,
+    );
+
+    this.registeredRoads = currentRoads;
+  }
+
+  /**
+   * ==========================================
+   * Animation Loop
+   * ==========================================
    */
   private animate = (): void => {
-    // درخواست Frame بعدی
-    this.animationFrameId = requestAnimationFrame(this.animate);
+    if (this.disposed) {
+      return;
+    }
 
-    // -----------------------------
-    // Delta Time
-    // -----------------------------
+    this.animationFrameId =
+      requestAnimationFrame(this.animate);
 
-    // مدت زمان گذشته از فریم قبلی
-    // بر حسب ثانیه.
-    //
-    // مثال:
-    // 60 FPS ≈ 0.016 ثانیه
-    // 30 FPS ≈ 0.033 ثانیه
-    const deltaTime = Math.min(this.clock.getDelta(), 0.05);
+    const deltaTime = Math.min(
+      this.clock.getDelta(),
+      0.05,
+    );
 
-    // -----------------------------
-    // Camera
-    // -----------------------------
-
-    // به‌روزرسانی حرکت دوربین
     this.cameraController.update();
-    // -----------------------------
-    // World
-    // -----------------------------
 
-    // فاصله فعلی دوربین از Target.
-    // این مقدار مستقیماً از CameraController
-    // گرفته می‌شود تا تعداد Chunkهای فعال
-    // با Zoom هماهنگ باشد.
-    const cameraDistance = this.cameraController.getDistance();
+    const cameraDistance =
+      this.cameraController.getDistance();
 
-    // به‌روزرسانی World
-    //
-    // cameraPosition:
-    // موقعیت دوربین
-    //
-    // cameraDistance:
-    // فاصله Zoom دوربین
-    //
-    // deltaTime:
-    // زمان گذشته از فریم قبلی
-    this.world.update(this.camera.instance.position, cameraDistance, deltaTime);
-    // -----------------------------
-    // Render
-    // -----------------------------
+    this.world.update(
+      this.camera.instance.position,
+      cameraDistance,
+      deltaTime,
+    );
 
-    // رندر صحنه
-    this.renderer.render(this.scene.instance, this.camera.instance);
+    this.updateRoadNetwork();
+
+    if (this.trafficInitialized) {
+      /**
+       * خود Camera به CarManager داده می‌شود تا Spawn/Reposition
+       * فقط بر اساس فاصله نباشد و واقعاً خارج از Frustum انجام شود.
+       */
+      this.carManager.update(
+        this.camera.instance.position,
+        deltaTime,
+        this.camera.instance,
+      );
+    }
+
+    this.renderer.render(
+      this.scene.instance,
+      this.camera.instance,
+    );
   };
 
   /**
-   * مدیریت تغییر اندازه صفحه
+   * ==========================================
+   * Resize
+   * ==========================================
    */
   private handleResize = (): void => {
+    if (this.disposed) {
+      return;
+    }
+
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    // به‌روزرسانی Camera
     this.camera.resize(width / height);
-
-    // به‌روزرسانی Renderer
     this.renderer.resize(width, height);
   };
 
   /**
-   * متوقف کردن Animation Loop
+   * ==========================================
+   * Stop
+   * ==========================================
    */
   public stop(): void {
     if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
+      cancelAnimationFrame(
+        this.animationFrameId,
+      );
 
       this.animationFrameId = null;
     }
 
-    // Clock را هم متوقف می‌کنیم.
     this.clock.stop();
   }
 
   /**
-   * آزاد کردن منابع Engine
+   * ==========================================
+   * Dispose
+   * ==========================================
    */
   public dispose(): void {
-    // توقف Animation Loop
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
     this.stop();
 
-    // حذف Event مربوط به Resize
-    window.removeEventListener("resize", this.handleResize);
+    window.removeEventListener(
+      "resize",
+      this.handleResize,
+    );
 
-    // آزاد کردن Camera Controller
     this.cameraController.dispose();
-
-    // آزاد کردن Renderer
     this.renderer.instance.dispose();
-
-    // آزاد کردن World
     this.world.dispose();
+    this.carManager.dispose();
+
+    this.registeredRoads = [];
   }
 }

@@ -6,23 +6,21 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
  * NatureManager
  * ==========================================
  *
- * مدیریت تمام عناصر طبیعی CityBlock:
+ * مدیریت عناصر طبیعی Plot:
  *
  * 🌳 Tree
  * 🌿 Bush
  * 🪨 Rock
  *
- * Nature به صورت InstancedMesh ساخته می‌شود
- * تا تعداد زیادی Object3D مستقل ایجاد نشود.
+ * برای Performance:
+ * - Tree / Bush / Rock به صورت InstancedMesh
+ *   ساخته می‌شوند.
+ * - Geometry و Material تا حد امکان Shared هستند.
+ * - Nature ثابت است و در هر Frame آپدیت نمی‌شود.
+ * - Shadow برای Nature خاموش است.
  *
- * در هر Plot:
- * - Tree
- * - Bush
- * - Rock
- *
- * به صورت MIX شده و تصادفی قرار می‌گیرند.
- *
- * ==========================================
+ * Nature فقط توسط PlotGenerator برای Villa و Park
+ * استفاده می‌شود.
  */
 
 // ==========================================
@@ -80,12 +78,16 @@ export class NatureManager {
    * ==========================================
    * ظرفیت‌ها
    * ==========================================
+   *
+   * این ظرفیت‌ها حداکثر تعداد Instanceهایی هستند
+   * که هر NatureManager می‌تواند نگه دارد.
+   *
+   * مقدارها عمداً محدود هستند تا روی موبایل
+   * فشار زیادی ایجاد نشود.
    */
 
   public static readonly MAX_TREES = 128;
-
   public static readonly MAX_BUSHES = 128;
-
   public static readonly MAX_ROCKS = 128;
 
   /**
@@ -151,6 +153,9 @@ export class NatureManager {
    * ==========================================
    * Pending Trees
    * ==========================================
+   *
+   * اگر مدل Tree هنوز Load نشده باشد،
+   * درخواست‌های Tree موقتاً اینجا نگهداری می‌شوند.
    */
 
   private readonly pendingTrees: PendingTree[] = [];
@@ -171,19 +176,26 @@ export class NatureManager {
    * ==========================================
    * Shared Bush Geometry
    * ==========================================
+   *
+   * تمام Bushهای این کلاس از یک Geometry
+   * مشترک استفاده می‌کنند.
    */
 
-  private static readonly bushGeometry = new THREE.IcosahedronGeometry(0.8, 1);
+  private static readonly bushGeometry =
+    new THREE.IcosahedronGeometry(0.8, 1);
 
   /**
+   * ==========================================
    * Bush Material
+   * ==========================================
    */
 
-  private static readonly bushMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4f8f3a,
-    roughness: 1,
-    metalness: 0,
-  });
+  private static readonly bushMaterial =
+    new THREE.MeshStandardMaterial({
+      color: 0x4f8f3a,
+      roughness: 1,
+      metalness: 0,
+    });
 
   /**
    * ==========================================
@@ -191,33 +203,43 @@ export class NatureManager {
    * ==========================================
    */
 
-  private static readonly rockGeometry = new THREE.DodecahedronGeometry(0.8, 0);
+  private static readonly rockGeometry =
+    new THREE.DodecahedronGeometry(0.8, 0);
 
   /**
+   * ==========================================
    * Rock Material
+   * ==========================================
    */
 
-  private static readonly rockMaterial = new THREE.MeshStandardMaterial({
-    color: 0x777777,
-    roughness: 1,
-    metalness: 0,
-  });
+  private static readonly rockMaterial =
+    new THREE.MeshStandardMaterial({
+      color: 0x777777,
+      roughness: 1,
+      metalness: 0,
+    });
 
   /**
    * ==========================================
    * Temporary Math Objects
    * ==========================================
+   *
+   * برای جلوگیری از ساخت Vector / Matrix
+   * جدید در هر Instance.
    */
 
   private readonly matrix = new THREE.Matrix4();
 
   private readonly quaternion = new THREE.Quaternion();
 
-  private readonly rotationAxis = new THREE.Vector3(0, 1, 0);
+  private readonly rotationAxis =
+    new THREE.Vector3(0, 1, 0);
 
-  private readonly position = new THREE.Vector3();
+  private readonly position =
+    new THREE.Vector3();
 
-  private readonly scale = new THREE.Vector3();
+  private readonly scale =
+    new THREE.Vector3();
 
   /**
    * ==========================================
@@ -229,6 +251,12 @@ export class NatureManager {
     this.group = new THREE.Group();
 
     this.group.name = "NatureManager";
+
+    /**
+     * Metadata برای تشخیص Nature در آینده.
+     */
+
+    this.group.userData.isNatureManager = true;
 
     /**
      * ========================================
@@ -244,7 +272,9 @@ export class NatureManager {
 
     this.bushes.count = 0;
 
-    this.bushes.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    this.bushes.instanceMatrix.setUsage(
+      THREE.StaticDrawUsage,
+    );
 
     this.bushes.castShadow = false;
 
@@ -268,7 +298,9 @@ export class NatureManager {
 
     this.rocks.count = 0;
 
-    this.rocks.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    this.rocks.instanceMatrix.setUsage(
+      THREE.StaticDrawUsage,
+    );
 
     this.rocks.castShadow = false;
 
@@ -279,37 +311,36 @@ export class NatureManager {
     this.rocks.name = "RockInstances";
 
     /**
-     * ========================================
-     * Add Bush + Rock
-     * ========================================
+     * اضافه کردن Bush و Rock.
      */
 
-    this.group.add(this.bushes);
-
-    this.group.add(this.rocks);
+    this.group.add(
+      this.bushes,
+      this.rocks,
+    );
 
     /**
-     * ========================================
-     * Start Tree Loading
-     * ========================================
+     * شروع Load مدل Tree.
      */
-
-    this.readyPromise = this.initializeTree();
+    this.readyPromise =
+      this.initializeTree();
   }
 
-  // ========================================
-  // Initialize Tree
-  // ========================================
+  /**
+   * ==========================================
+   * Initialize Tree
+   * ==========================================
+   */
 
   private async initializeTree(): Promise<void> {
     try {
-      const data = await NatureManager.loadTreeModel();
+      const data =
+        await NatureManager.loadTreeModel();
 
       /**
        * اگر Manager در زمان Load
        * Dispose شده باشد، ادامه نده.
        */
-
       if (this.disposed) {
         return;
       }
@@ -317,23 +348,20 @@ export class NatureManager {
       /**
        * ساخت Tree InstancedMesh.
        *
-       * GLB شما دارای دو Material است:
-       *
-       * woodBark
-       * leafsGreen
-       *
-       * بنابراین Material Array حفظ می‌شود.
+       * Material Array مدل GLB حفظ می‌شود.
        */
-
-      this.trees = new THREE.InstancedMesh(
-        data.geometry,
-        data.materials,
-        NatureManager.MAX_TREES,
-      );
+      this.trees =
+        new THREE.InstancedMesh(
+          data.geometry,
+          data.materials,
+          NatureManager.MAX_TREES,
+        );
 
       this.trees.count = 0;
 
-      this.trees.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      this.trees.instanceMatrix.setUsage(
+        THREE.StaticDrawUsage,
+      );
 
       this.trees.castShadow = false;
 
@@ -350,16 +378,20 @@ export class NatureManager {
       /**
        * Treeهای منتظر را اضافه کن.
        */
-
       this.flushPendingTrees();
     } catch (error) {
-      console.error("[NatureManager] Failed to initialize tree:", error);
+      console.error(
+        "[NatureManager] Failed to initialize tree:",
+        error,
+      );
     }
   }
 
-  // ========================================
-  // Add Tree
-  // ========================================
+  /**
+   * ==========================================
+   * Add Tree
+   * ==========================================
+   */
 
   public addTree(
     x: number,
@@ -376,9 +408,11 @@ export class NatureManager {
      * اگر Tree هنوز Load نشده،
      * درخواست را ذخیره کن.
      */
-
     if (this.trees === null) {
-      if (this.pendingTrees.length >= NatureManager.MAX_TREES) {
+      if (
+        this.pendingTrees.length >=
+        NatureManager.MAX_TREES
+      ) {
         return null;
       }
 
@@ -396,21 +430,35 @@ export class NatureManager {
     /**
      * بررسی ظرفیت.
      */
-
-    if (this.treeCount >= NatureManager.MAX_TREES) {
+    if (
+      this.treeCount >=
+      NatureManager.MAX_TREES
+    ) {
       return null;
     }
 
-    const index = this.addTreeInstance(x, y, z, rotationY, scale);
+    const index =
+      this.addTreeInstance(
+        x,
+        y,
+        z,
+        rotationY,
+        scale,
+      );
 
-    this.trees.instanceMatrix.needsUpdate = true;
+    if (index >= 0) {
+      this.trees.instanceMatrix.needsUpdate =
+        true;
+    }
 
     return index;
   }
 
-  // ========================================
-  // Add Tree Instance
-  // ========================================
+  /**
+   * ==========================================
+   * Add Tree Instance
+   * ==========================================
+   */
 
   private addTreeInstance(
     x: number,
@@ -423,76 +471,113 @@ export class NatureManager {
       return -1;
     }
 
-    if (this.treeCount >= NatureManager.MAX_TREES) {
+    if (
+      this.treeCount >=
+      NatureManager.MAX_TREES
+    ) {
       return -1;
     }
 
-    const index = this.treeCount;
+    const index =
+      this.treeCount;
 
     /**
      * Position
      */
-
-    this.position.set(x, y, z);
+    this.position.set(
+      x,
+      y,
+      z,
+    );
 
     /**
      * Rotation
      */
-
-    this.quaternion.setFromAxisAngle(this.rotationAxis, rotationY);
+    this.quaternion.setFromAxisAngle(
+      this.rotationAxis,
+      rotationY,
+    );
 
     /**
      * Scale
      */
-
-    this.scale.set(scale, scale, scale);
+    this.scale.set(
+      scale,
+      scale,
+      scale,
+    );
 
     /**
      * Matrix
      */
+    this.matrix.compose(
+      this.position,
+      this.quaternion,
+      this.scale,
+    );
 
-    this.matrix.compose(this.position, this.quaternion, this.scale);
-
-    this.trees.setMatrixAt(index, this.matrix);
+    this.trees.setMatrixAt(
+      index,
+      this.matrix,
+    );
 
     this.treeCount++;
 
-    this.trees.count = this.treeCount;
+    this.trees.count =
+      this.treeCount;
 
     return index;
   }
 
-  // ========================================
-  // Flush Pending Trees
-  // ========================================
+  /**
+   * ==========================================
+   * Flush Pending Trees
+   * ==========================================
+   */
 
   private flushPendingTrees(): void {
     if (this.trees === null) {
       return;
     }
 
-    if (this.pendingTrees.length === 0) {
+    if (
+      this.pendingTrees.length === 0
+    ) {
       return;
     }
 
-    for (const tree of this.pendingTrees) {
-      if (this.treeCount >= NatureManager.MAX_TREES) {
+    for (
+      const tree of this.pendingTrees
+    ) {
+      if (
+        this.treeCount >=
+        NatureManager.MAX_TREES
+      ) {
         break;
       }
 
-      this.addTreeInstance(tree.x, tree.y, tree.z, tree.rotationY, tree.scale);
+      this.addTreeInstance(
+        tree.x,
+        tree.y,
+        tree.z,
+        tree.rotationY,
+        tree.scale,
+      );
     }
 
     this.pendingTrees.length = 0;
 
-    this.trees.instanceMatrix.needsUpdate = true;
+    this.trees.instanceMatrix.needsUpdate =
+      true;
 
     this.trees.computeBoundingSphere();
   }
 
-  // ========================================
-  // Add Bush
-  // ========================================
+  /**
+   * ==========================================
+   * Add Bush
+   * ==========================================
+   */
 
   public addBush(
     x: number,
@@ -505,38 +590,68 @@ export class NatureManager {
       return null;
     }
 
-    if (this.bushCount >= NatureManager.MAX_BUSHES) {
+    if (
+      this.bushCount >=
+      NatureManager.MAX_BUSHES
+    ) {
       return null;
     }
 
-    const index = this.bushCount;
+    const index =
+      this.bushCount;
 
-    this.position.set(x, y, z);
+    this.position.set(
+      x,
+      y,
+      z,
+    );
 
-    this.quaternion.setFromAxisAngle(this.rotationAxis, rotationY);
+    this.quaternion.setFromAxisAngle(
+      this.rotationAxis,
+      rotationY,
+    );
 
     /**
-     * تغییر جزئی اندازه.
+     * کمی تغییر ارتفاع Bush
+     * برای جلوگیری از یکنواختی کامل.
      */
+    this.scale.set(
+      scale,
+      scale *
+        (
+          0.75 +
+          Math.random() * 0.25
+        ),
+      scale,
+    );
 
-    this.scale.set(scale, scale * (0.75 + Math.random() * 0.25), scale);
+    this.matrix.compose(
+      this.position,
+      this.quaternion,
+      this.scale,
+    );
 
-    this.matrix.compose(this.position, this.quaternion, this.scale);
-
-    this.bushes.setMatrixAt(index, this.matrix);
+    this.bushes.setMatrixAt(
+      index,
+      this.matrix,
+    );
 
     this.bushCount++;
 
-    this.bushes.count = this.bushCount;
+    this.bushes.count =
+      this.bushCount;
 
-    this.bushes.instanceMatrix.needsUpdate = true;
+    this.bushes.instanceMatrix.needsUpdate =
+      true;
 
     return index;
   }
 
-  // ========================================
-  // Add Rock
-  // ========================================
+  /**
+   * ==========================================
+   * Add Rock
+   * ==========================================
+   */
 
   public addRock(
     x: number,
@@ -549,62 +664,88 @@ export class NatureManager {
       return null;
     }
 
-    if (this.rockCount >= NatureManager.MAX_ROCKS) {
+    if (
+      this.rockCount >=
+      NatureManager.MAX_ROCKS
+    ) {
       return null;
     }
 
-    const index = this.rockCount;
+    const index =
+      this.rockCount;
 
-    this.position.set(x, y, z);
-
-    this.quaternion.setFromAxisAngle(this.rotationAxis, rotationY);
-
-    /**
-     * تغییر تصادفی شکل سنگ.
-     */
-
-    this.scale.set(
-      scale * (0.8 + Math.random() * 0.4),
-
-      scale * (0.55 + Math.random() * 0.35),
-
-      scale * (0.75 + Math.random() * 0.35),
+    this.position.set(
+      x,
+      y,
+      z,
     );
 
-    this.matrix.compose(this.position, this.quaternion, this.scale);
+    this.quaternion.setFromAxisAngle(
+      this.rotationAxis,
+      rotationY,
+    );
 
-    this.rocks.setMatrixAt(index, this.matrix);
+    /**
+     * تغییر جزئی شکل سنگ.
+     */
+    this.scale.set(
+      scale *
+        (
+          0.8 +
+          Math.random() * 0.4
+        ),
+      scale *
+        (
+          0.55 +
+          Math.random() * 0.35
+        ),
+      scale *
+        (
+          0.75 +
+          Math.random() * 0.35
+        ),
+    );
+
+    this.matrix.compose(
+      this.position,
+      this.quaternion,
+      this.scale,
+    );
+
+    this.rocks.setMatrixAt(
+      index,
+      this.matrix,
+    );
 
     this.rockCount++;
 
-    this.rocks.count = this.rockCount;
+    this.rocks.count =
+      this.rockCount;
 
-    this.rocks.instanceMatrix.needsUpdate = true;
+    this.rocks.instanceMatrix.needsUpdate =
+      true;
 
     return index;
   }
 
-  // ========================================
-  // Populate Plot
-  // ========================================
-
-  // ========================================
-  // Populate Plot
-  // ========================================
-
   /**
-   * Nature را در محدوده چمن اطراف خانه قرار می‌دهد.
+   * ==========================================
+   * Populate Plot
+   * ==========================================
    *
-   * نکته مهم:
-   * Plot حدود 12x12 است و Sidewalk در اطراف آن قرار دارد.
-   * بنابراین Nature نباید نزدیک لبه‌های Plot باشد.
+   * Nature را در محدوده چمن اطراف خانه
+   * قرار می‌دهد.
    *
-   * محدوده تقریبی چمن:
-   * -4 تا +4
+   * Plot حدود 12×12 است و Sidewalk
+   * در اطراف آن قرار دارد.
    *
-   * به این ترتیب Nature روی پیاده‌رو قرار نمی‌گیرد.
+   * بنابراین Nature از لبه‌ها فاصله دارد.
    */
-  public populatePlot(centerX: number, centerZ: number, rotationY = 0): void {
+  public populatePlot(
+    centerX: number,
+    centerZ: number,
+    rotationY = 0,
+  ): void {
     if (this.disposed) {
       return;
     }
@@ -612,7 +753,8 @@ export class NatureManager {
     /**
      * نقاط داخل محدوده چمن.
      *
-     * این نقاط عمداً از لبه‌های Plot فاصله دارند.
+     * محدوده تقریباً -3.8 تا +3.8 است
+     * تا Nature روی Sidewalk قرار نگیرد.
      */
     const points: NaturePoint[] = [
       {
@@ -650,14 +792,14 @@ export class NatureManager {
     ];
 
     /**
-     * نقاط را تصادفی می‌کنیم تا هر Plot
-     * ظاهر متفاوتی داشته باشد.
+     * نقاط را تصادفی می‌کنیم.
      */
     this.shuffle(points);
 
     /**
-     * حداقل یک Tree، یک Bush و یک Rock
-     * در هر Plot وجود خواهد داشت.
+     * حداقل یک Tree،
+     * یک Bush،
+     * و یک Rock.
      */
     const natureTypes: NatureType[] = [
       "tree",
@@ -669,57 +811,88 @@ export class NatureManager {
     ];
 
     /**
-     * محل Typeها هم تصادفی می‌شود.
+     * محل Typeها نیز تصادفی می‌شود.
      */
     this.shuffle(natureTypes);
 
     /**
-     * Rotation Plot
+     * Rotation Plot.
      */
-    const cos = Math.cos(rotationY);
-    const sin = Math.sin(rotationY);
+    const cos =
+      Math.cos(rotationY);
+
+    const sin =
+      Math.sin(rotationY);
 
     /**
-     * کمی جابه‌جایی تصادفی برای طبیعی‌تر شدن.
+     * کمی Jitter برای طبیعی‌تر شدن.
      */
-    const jitter = (): number => -0.45 + Math.random() * 0.9;
+    const jitter = (): number =>
+      -0.45 +
+      Math.random() * 0.9;
 
     /**
-     * Local → World
+     * Local → Rotated Local
      */
-    const transformPoint = (point: NaturePoint): NaturePoint => {
-      const localX = point.x + jitter();
+    const transformPoint = (
+      point: NaturePoint,
+    ): NaturePoint => {
+      const localX =
+        point.x + jitter();
 
-      const localZ = point.z + jitter();
+      const localZ =
+        point.z + jitter();
 
       return {
-        x: localX * cos - localZ * sin,
+        x:
+          localX * cos -
+          localZ * sin,
 
-        z: localX * sin + localZ * cos,
+        z:
+          localX * sin +
+          localZ * cos,
       };
     };
 
     /**
-     * فقط 6 عنصر می‌سازیم.
+     * فقط 6 عنصر در هر Plot.
      *
-     * این باعث می‌شود فضای اطراف خانه
-     * شلوغ نشود.
+     * فضای اطراف خانه شلوغ نمی‌شود.
      */
-    for (let i = 0; i < 6; i++) {
-      const point = points[i];
-      const type = natureTypes[i];
+    for (
+      let i = 0;
+      i < 6;
+      i++
+    ) {
+      const point =
+        points[i];
 
-      if (point === undefined || type === undefined) {
+      const type =
+        natureTypes[i];
+
+      if (
+        point === undefined ||
+        type === undefined
+      ) {
         continue;
       }
 
-      const worldPoint = transformPoint(point);
+      const worldPoint =
+        transformPoint(point);
 
-      const x = centerX + worldPoint.x;
+      const x =
+        centerX +
+        worldPoint.x;
 
-      const z = centerZ + worldPoint.z;
+      const z =
+        centerZ +
+        worldPoint.z;
 
-      const randomRotation = rotationY + Math.random() * Math.PI * 2;
+      const randomRotation =
+        rotationY +
+        Math.random() *
+          Math.PI *
+          2;
 
       /**
        * 🌳 Tree
@@ -730,29 +903,45 @@ export class NatureManager {
           0,
           z,
           randomRotation,
-          NatureManager.TREE_SCALE * (0.9 + Math.random() * 0.2),
+          NatureManager.TREE_SCALE *
+            (
+              0.9 +
+              Math.random() * 0.2
+            ),
         );
-      } else if (type === "bush") {
-        /**
-         * 🌿 Bush
-         */
+      }
+
+      /**
+       * 🌿 Bush
+       */
+      else if (type === "bush") {
         this.addBush(
           x,
           0,
           z,
           randomRotation,
-          NatureManager.BUSH_SCALE * (0.9 + Math.random() * 0.2),
+          NatureManager.BUSH_SCALE *
+            (
+              0.9 +
+              Math.random() * 0.2
+            ),
         );
-      } else {
-        /**
-         * 🪨 Rock
-         */
+      }
+
+      /**
+       * 🪨 Rock
+       */
+      else {
         this.addRock(
           x,
           0,
           z,
           randomRotation,
-          NatureManager.ROCK_SCALE * (0.9 + Math.random() * 0.2),
+          NatureManager.ROCK_SCALE *
+            (
+              0.9 +
+              Math.random() * 0.2
+            ),
         );
       }
     }
@@ -763,55 +952,90 @@ export class NatureManager {
     this.updateBounds();
   }
 
-  // ========================================
-  // Random Nature Type
-  // ========================================
+  /**
+   * ==========================================
+   * Random Nature Type
+   * ==========================================
+   */
 
   private randomNatureType(): NatureType {
-    const types: NatureType[] = ["tree", "bush", "rock"];
+    const types: NatureType[] = [
+      "tree",
+      "bush",
+      "rock",
+    ];
 
-    const index = Math.floor(Math.random() * types.length);
+    const index =
+      Math.floor(
+        Math.random() *
+          types.length,
+      );
 
-    return types[index] ?? "bush";
+    return (
+      types[index] ??
+      "bush"
+    );
   }
 
-  // ========================================
-  // Update Bounds
-  // ========================================
+  /**
+   * ==========================================
+   * Update Bounds
+   * ==========================================
+   */
 
   private updateBounds(): void {
-    if (this.bushCount > 0) {
+    if (
+      this.bushCount > 0
+    ) {
       this.bushes.computeBoundingSphere();
     }
 
-    if (this.rockCount > 0) {
+    if (
+      this.rockCount > 0
+    ) {
       this.rocks.computeBoundingSphere();
     }
 
-    if (this.trees !== null && this.treeCount > 0) {
+    if (
+      this.trees !== null &&
+      this.treeCount > 0
+    ) {
       this.trees.computeBoundingSphere();
     }
   }
 
-  // ========================================
-  // Shuffle
-  // ========================================
+  /**
+   * ==========================================
+   * Shuffle
+   * ==========================================
+   *
+   * Fisher-Yates Shuffle
+   */
+  private shuffle<T>(
+    array: T[],
+  ): void {
+    for (
+      let i =
+        array.length - 1;
+      i > 0;
+      i--
+    ) {
+      const j =
+        Math.floor(
+          Math.random() *
+            (i + 1),
+        );
 
-  private shuffle<T>(array: T[]): void {
-    /**
-     * Fisher-Yates Shuffle
-     *
-     * به صورت Strict-TypeScript safe.
-     */
+      const current =
+        array[i];
 
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const random =
+        array[j];
 
-      const current = array[i];
-
-      const random = array[j];
-
-      if (current === undefined || random === undefined) {
+      if (
+        current === undefined ||
+        random === undefined
+      ) {
         continue;
       }
 
@@ -821,9 +1045,11 @@ export class NatureManager {
     }
   }
 
-  // ========================================
-  // Ready
-  // ========================================
+  /**
+   * ==========================================
+   * Ready
+   * ==========================================
+   */
 
   public async waitUntilReady(): Promise<void> {
     await this.readyPromise;
@@ -833,9 +1059,11 @@ export class NatureManager {
     return this.ready;
   }
 
-  // ========================================
-  // Counts
-  // ========================================
+  /**
+   * ==========================================
+   * Counts
+   * ==========================================
+   */
 
   public getTreeCount(): number {
     return this.treeCount;
@@ -853,36 +1081,57 @@ export class NatureManager {
     return this.pendingTrees.length;
   }
 
-  // ========================================
-  // Dispose
-  // ========================================
-
+  /**
+   * ==========================================
+   * Dispose
+   * ==========================================
+   *
+   * Geometry و Materialهای Shared اینجا
+   * Dispose نمی‌شوند.
+   *
+   * چون ممکن است NatureManagerهای دیگری
+   * از همان منابع استفاده کنند.
+   */
   public dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
     /**
      * جلوگیری از ادامه Async.
      */
-
     this.disposed = true;
 
     /**
      * InstanceMeshها حذف می‌شوند.
-     *
-     * Geometry و Materialها Shared هستند
-     * و اینجا Dispose نمی‌شوند.
      */
-
     if (this.trees !== null) {
-      this.group.remove(this.trees);
+      this.group.remove(
+        this.trees,
+      );
     }
 
-    this.group.remove(this.bushes);
+    this.group.remove(
+      this.bushes,
+    );
 
-    this.group.remove(this.rocks);
+    this.group.remove(
+      this.rocks,
+    );
 
+    /**
+     * پاک کردن Group.
+     */
     this.group.clear();
 
+    /**
+     * پاک کردن Pending Trees.
+     */
     this.pendingTrees.length = 0;
 
+    /**
+     * Reset.
+     */
     this.trees = null;
 
     this.treeCount = 0;
@@ -894,10 +1143,17 @@ export class NatureManager {
     this.ready = false;
   }
 
-  // ========================================
-  // Load Tree Model
-  // ========================================
-
+  /**
+   * ==========================================
+   * Load Tree Model
+   * ==========================================
+   *
+   * Tree مدل GLB را فقط یک بار Load می‌کند.
+   *
+   * Geometry و Materialها Cache می‌شوند
+   * و NatureManagerهای مختلف از همان منابع
+   * استفاده می‌کنند.
+   */
   private static async loadTreeModel(): Promise<{
     geometry: THREE.BufferGeometry;
     materials: THREE.Material[];
@@ -908,11 +1164,16 @@ export class NatureManager {
      * ======================================
      */
 
-    if (cachedTreeGeometry !== null && cachedTreeMaterials !== null) {
+    if (
+      cachedTreeGeometry !== null &&
+      cachedTreeMaterials !== null
+    ) {
       return {
-        geometry: cachedTreeGeometry,
+        geometry:
+          cachedTreeGeometry,
 
-        materials: cachedTreeMaterials,
+        materials:
+          cachedTreeMaterials,
       };
     }
 
@@ -920,9 +1181,14 @@ export class NatureManager {
      * ======================================
      * Shared Loading Promise
      * ======================================
+     *
+     * اگر چند Plot همزمان درخواست Tree
+     * بدهند، فقط یک GLB Load می‌شود.
      */
 
-    if (treeLoadingPromise !== null) {
+    if (
+      treeLoadingPromise !== null
+    ) {
       return treeLoadingPromise;
     }
 
@@ -932,83 +1198,118 @@ export class NatureManager {
      * ======================================
      */
 
-    treeLoadingPromise = loader
-      .loadAsync(NatureManager.TREE_MODEL_PATH)
-      .then((gltf) => {
-        let foundMesh: THREE.Mesh | undefined;
-
-        /**
-         * پیدا کردن Mesh اصلی.
-         */
-
-        gltf.scene.traverse((object) => {
-          if (foundMesh === undefined && object instanceof THREE.Mesh) {
-            foundMesh = object;
-          }
-        });
-
-        if (foundMesh === undefined) {
-          throw new Error("tree_default.glb does not contain a Mesh.");
-        }
-
-        const sourceMesh: THREE.Mesh = foundMesh;
-
-        /**
-         * ==================================
-         * Geometry
-         * ==================================
-         */
-
-        const geometry = sourceMesh.geometry.clone();
-
-        /**
-         * ==================================
-         * Materials
-         * ==================================
-         */
-
-        const sourceMaterials: THREE.Material[] = Array.isArray(
-          sourceMesh.material,
+    treeLoadingPromise =
+      loader
+        .loadAsync(
+          NatureManager.TREE_MODEL_PATH,
         )
-          ? sourceMesh.material
-          : [sourceMesh.material];
-
-        const materials = sourceMaterials.map((material) => {
-          const cloned = material.clone();
+        .then((gltf) => {
+          let foundMesh:
+            | THREE.Mesh
+            | undefined;
 
           /**
-           * تنظیمات Material درخت.
+           * پیدا کردن اولین Mesh اصلی.
            */
+          gltf.scene.traverse(
+            (object) => {
+              if (
+                foundMesh ===
+                  undefined &&
+                object instanceof THREE.Mesh
+              ) {
+                foundMesh = object;
+              }
+            },
+          );
 
-          if (cloned instanceof THREE.MeshStandardMaterial) {
-            cloned.metalness = 0;
-
-            cloned.roughness = Math.max(cloned.roughness, 0.65);
+          if (
+            foundMesh ===
+            undefined
+          ) {
+            throw new Error(
+              "tree_default.glb does not contain a Mesh.",
+            );
           }
 
-          cloned.needsUpdate = true;
+          const sourceMesh =
+            foundMesh;
 
-          return cloned;
+          /**
+           * ==================================
+           * Geometry
+           * ==================================
+           */
+
+          const geometry =
+            sourceMesh.geometry.clone();
+
+          /**
+           * ==================================
+           * Materials
+           * ==================================
+           */
+
+          const sourceMaterials:
+            THREE.Material[] =
+            Array.isArray(
+              sourceMesh.material,
+            )
+              ? sourceMesh.material
+              : [
+                  sourceMesh.material,
+                ];
+
+          const materials =
+            sourceMaterials.map(
+              (material) => {
+                const cloned =
+                  material.clone();
+
+                /**
+                 * تنظیم Material درخت.
+                 */
+                if (
+                  cloned instanceof
+                  THREE.MeshStandardMaterial
+                ) {
+                  cloned.metalness = 0;
+
+                  cloned.roughness =
+                    Math.max(
+                      cloned.roughness,
+                      0.65,
+                    );
+                }
+
+                cloned.needsUpdate =
+                  true;
+
+                return cloned;
+              },
+            );
+
+          /**
+           * ==================================
+           * Cache
+           * ==================================
+           */
+
+          cachedTreeGeometry =
+            geometry;
+
+          cachedTreeMaterials =
+            materials;
+
+          return {
+            geometry,
+            materials,
+          };
+        })
+        .finally(() => {
+          treeLoadingPromise =
+            null;
         });
-
-        /**
-         * ==================================
-         * Cache
-         * ==================================
-         */
-
-        cachedTreeGeometry = geometry;
-
-        cachedTreeMaterials = materials;
-
-        return {
-          geometry,
-          materials,
-        };
-      })
-      .finally(() => {
-        treeLoadingPromise = null;
-      });
 
     return treeLoadingPromise;
   }

@@ -1,23 +1,21 @@
 import * as THREE from "three";
-
 import {
   PlotGenerator,
   type PlotRole,
   type ResidentialBuildingKind,
 } from "./PlotGenerator";
-
 import type { BuildingType } from "./BuildingFactory";
 import { RoadGenerator } from "./RoadGenerator";
+import { Road } from "./Road";
 import { Intersection } from "./Intersection";
 
 /**
- * اطلاعات ثابت هر Plot داخل CityBlock.
+ * ==========================================
+ * Plot Layout
+ * ==========================================
  *
- * نکته:
- * - موقعیت‌ها طوری انتخاب شده‌اند که Plotها دقیقاً
- *   داخل چهار ناحیه اطراف تقاطع قرار بگیرند.
- * - حصار، پیاده‌رو یا خیابان توسط CityBlock ساخته نمی‌شود.
- *   حصار کاملاً مسئولیت PlotGenerator است.
+ * تنظیمات مربوط به محل قرارگیری هر Plot
+ * داخل CityBlock.
  */
 interface PlotLayout {
   x: number;
@@ -25,374 +23,321 @@ interface PlotLayout {
   rotation: number;
   role: PlotRole;
 
-  /**
-   * آیا Apartment فضای سبز محدود داشته باشد؟
-   */
+  // آیا Apartment دارای فضای سبز باشد؟
   apartmentHasGreenArea?: boolean;
+
+  // تغییر محل و اندازه ساختمان داخل Plot
+  buildingOffsetX?: number;
+  buildingOffsetZ?: number;
+  buildingScale?: number;
 }
 
-/**
- * CityBlock
- *
- * هر Block یک محله کوچک مستقل است:
- *
- *                    Road
- *          ─────────────────────
- *          │                  │
- *          │  Villa    Apt.   │
- *          │                  │
- *     Road ├──── Intersection ─┤ Road
- *          │                  │
- *          │  Shop     Factory│
- *          │                  │
- *          ─────────────────────
- *                    Road
- *
- * مسئولیت‌های CityBlock:
- *
- * - ساخت Road
- * - ساخت Intersection
- * - تعیین Layout ساختمان‌ها
- * - ساخت Plotها
- *
- * CityBlock خودش:
- * - ساختمان را مستقیماً نمی‌سازد.
- * - حصار را نمی‌سازد.
- * - Nature را مدیریت نمی‌کند.
- *
- * این موارد توسط PlotGenerator و BuildingFactory انجام می‌شوند.
- */
 export class CityBlock {
-  /**
-   * ابعاد کلی Block.
-   *
-   * با ChunkManager و Road هماهنگ است.
-   */
+  // ==========================================
+  // CityBlock Dimensions
+  // ==========================================
+
   private static readonly WIDTH = 32;
   private static readonly DEPTH = 32;
 
-  /**
-   * ابعاد هر Plot.
-   *
-   * چهار Plot دقیقاً در چهار ناحیه اطراف
-   * خیابان مرکزی قرار می‌گیرند.
-   */
+  // ابعاد هر Plot
   private static readonly PLOT_WIDTH = 12;
   private static readonly PLOT_DEPTH = 12;
 
-  /**
-   * فاصله مرکز Plot از مرکز Block.
-   *
-   * چون:
-   *
-   * Block = 32
-   * Road  = 8
-   * Plot  = 12
-   *
-   * هر Plot باید در مرکز یکی از چهار ناحیه
-   * 12×12 قرار بگیرد.
-   *
-   * بنابراین:
-   *
-   * 12 / 2 + 8 / 2 = 10
-   */
+  // فاصله Plotها از مرکز CityBlock
   private static readonly PLOT_OFFSET = 10;
 
-  /**
-   * Layout اصلی Block.
-   *
-   * طراحی عمداً asymmetrical است تا Block
-   * شبیه یک مجموعه ساختمان خشک و تکراری نباشد.
-   *
-   * ┌──────────────────────────────┐
-   * │ Villa        Apartment       │
-   * │                              │
-   * │                              │
-   * │──────── Intersection ────────│
-   * │                              │
-   * │ Commercial      Industrial   │
-   * │                              │
-   * └──────────────────────────────┘
-   *
-   * هر ساختمان داخل Plot خودش مستقل باقی می‌ماند.
-   */
-  private static readonly PLOT_LAYOUT: readonly PlotLayout[] = [
-    /**
-     * 🏠 Villa
-     *
-     * - suburban
-     * - grass
-     * - Nature
-     * - path
-     * - hedge fence
-     * - بدون parking
-     */
+  // ==========================================
+  // Villa Layout
+  // ==========================================
+
+  private static readonly VILLA_LAYOUT: readonly PlotLayout[] = [
     {
-      x: -CityBlock.PLOT_OFFSET,
-      z: -CityBlock.PLOT_OFFSET,
-      rotation: THREE.MathUtils.degToRad(0),
+      x: -10,
+      z: -10,
+      rotation: 0,
       role: "villa",
+      buildingOffsetX: -0.65,
+      buildingOffsetZ: 0.35,
+      buildingScale: 3.9,
     },
-
-    /**
-     * 🏢 Apartment
-     *
-     * - commercial model
-     * - asphalt
-     * - parking
-     * - green area محدود
-     * - short fence
-     */
     {
-      x: CityBlock.PLOT_OFFSET,
-      z: -CityBlock.PLOT_OFFSET,
-      rotation: THREE.MathUtils.degToRad(0),
-      role: "apartment",
-      apartmentHasGreenArea: true,
+      x: 10,
+      z: -10,
+      rotation: 0,
+      role: "villa",
+      buildingOffsetX: 0.45,
+      buildingOffsetZ: 0.55,
+      buildingScale: 4.15,
     },
-
-    /**
-     * 🏪 Commercial
-     *
-     * - commercial model
-     * - asphalt
-     * - parking
-     * - بدون Nature
-     */
     {
-      x: -CityBlock.PLOT_OFFSET,
-      z: CityBlock.PLOT_OFFSET,
-      rotation: THREE.MathUtils.degToRad(0),
-      role: "commercial",
+      x: -10,
+      z: 10,
+      rotation: 0,
+      role: "villa",
+      buildingOffsetX: -0.45,
+      buildingOffsetZ: -0.55,
+      buildingScale: 4.05,
     },
-
-    /**
-     * 🏭 Industrial
-     *
-     * - industrial model
-     * - asphalt
-     * - parking
-     * - بدون Nature
-     */
     {
-      x: CityBlock.PLOT_OFFSET,
-      z: CityBlock.PLOT_OFFSET,
-      rotation: THREE.MathUtils.degToRad(0),
-      role: "industrial",
+      x: 10,
+      z: 10,
+      rotation: 0,
+      role: "villa",
+      buildingOffsetX: 0.6,
+      buildingOffsetZ: -0.35,
+      buildingScale: 3.8,
     },
   ];
 
-  /**
-   * گروه اصلی Block.
-   */
+  // ==========================================
+  // Apartment Layout
+  // ==========================================
+
+  private static readonly APARTMENT_LAYOUT: readonly PlotLayout[] = [
+    {
+      x: -10,
+      z: -10,
+      rotation: 0,
+      role: "apartment",
+      apartmentHasGreenArea: true,
+      buildingOffsetX: -0.35,
+      buildingOffsetZ: 0.25,
+      buildingScale: 3.9,
+    },
+    {
+      x: 10,
+      z: -10,
+      rotation: 0,
+      role: "apartment",
+      apartmentHasGreenArea: true,
+      buildingOffsetX: 0.35,
+      buildingOffsetZ: 0.15,
+      buildingScale: 4.1,
+    },
+    {
+      x: -10,
+      z: 10,
+      rotation: 0,
+      role: "apartment",
+      apartmentHasGreenArea: true,
+      buildingOffsetX: -0.25,
+      buildingOffsetZ: -0.4,
+      buildingScale: 4.05,
+    },
+    {
+      x: 10,
+      z: 10,
+      rotation: 0,
+      role: "apartment",
+      apartmentHasGreenArea: true,
+      buildingOffsetX: 0.45,
+      buildingOffsetZ: -0.3,
+      buildingScale: 3.85,
+    },
+  ];
+
+  // ==========================================
+  // Industrial Layout
+  // ==========================================
+
+  private static readonly INDUSTRIAL_LAYOUT: readonly PlotLayout[] = [
+    {
+      x: -10,
+      z: -10,
+      rotation: 0,
+      role: "industrial",
+      buildingOffsetX: -0.35,
+      buildingOffsetZ: 0.2,
+      buildingScale: 4,
+    },
+    {
+      x: 10,
+      z: -10,
+      rotation: 0,
+      role: "industrial",
+      buildingOffsetX: 0.4,
+      buildingOffsetZ: 0.25,
+      buildingScale: 4.15,
+    },
+  ];
+
+  // ==========================================
+  // Internal Objects
+  // ==========================================
+
   public readonly group: THREE.Group;
 
-  /**
-   * Generator مشترک Plotها.
-   */
   private readonly plotGenerator: PlotGenerator;
-
-  /**
-   * Generator خیابان‌ها.
-   */
   private readonly roadGenerator: RoadGenerator;
-
-  /**
-   * تقاطع مرکزی.
-   */
   private readonly intersection: Intersection;
 
-  /**
-   * نوع پیش‌فرض BuildingFactory.
-   *
-   * این مقدار بیشتر برای metadata و سازگاری
-   * با معماری فعلی نگه داشته شده است.
-   */
   private readonly buildingType: BuildingType;
 
   /**
-   * Promise آماده‌شدن کامل Block.
+   * هر Road مستقل باقی می‌ماند.
+   *
+   * CarManager از همین Roadها برای
+   * پیدا کردن شبکه خیابان استفاده می‌کند.
    */
+  private readonly roads: Road[] = [];
+
+  // Promise آماده شدن ساختمان‌ها و Plotها
   private readonly readyPromise: Promise<void>;
 
-  /**
-   * آیا Block آماده شده است؟
-   */
   private ready = false;
-
-  /**
-   * آیا Block dispose شده است؟
-   */
   private disposed = false;
+
+  // ==========================================
+  // Constructor
+  // ==========================================
 
   constructor(buildingType: BuildingType = "suburban") {
     this.buildingType = buildingType;
 
-    /**
-     * Group اصلی Block.
-     */
+    // گروه اصلی CityBlock
     this.group = new THREE.Group();
     this.group.name = "CityBlock";
 
-    /**
-     * Metadata مربوط به Block.
-     */
+    // Metadata مربوط به CityBlock
     this.group.userData.isCityBlock = true;
     this.group.userData.buildingType = this.buildingType;
 
-    /**
-     * Generator مشترک Plotها.
-     *
-     * استفاده از یک Generator باعث می‌شود
-     * مدیریت cache و منابع ساده‌تر بماند.
-     */
+    // Generatorهای مورد نیاز
     this.plotGenerator = new PlotGenerator();
-
-    /**
-     * Generator خیابان‌ها.
-     */
     this.roadGenerator = new RoadGenerator();
 
-    /**
-     * ساخت Intersection مرکزی.
-     */
+    // Intersection مستقل
     this.intersection = new Intersection();
-
     this.intersection.group.userData.isIntersection = true;
 
-    /**
-     * ابتدا Road و Intersection ساخته می‌شوند
-     * تا اسکلت اصلی Block از همان ابتدا وجود داشته باشد.
-     */
+    // ساخت Roadها
     this.createRoads();
 
-    /**
-     * سپس Plotها به صورت Async ساخته می‌شوند.
-     */
+    // ساخت Plotها به صورت asynchronous
     this.readyPromise = this.createPlots();
   }
 
-  /**
-   * ساخت خیابان‌ها و Intersection.
-   *
-   * یک خیابان افقی و یک خیابان عمودی داریم
-   * که دقیقاً از مرکز Block عبور می‌کنند.
-   */
+  // ==========================================
+  // Create Roads
+  // ==========================================
+
   private createRoads(): void {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
 
-    /**
-     * Road عمودی.
-     */
-    const verticalRoad = this.roadGenerator.createVerticalRoad(CityBlock.DEPTH);
+    // ------------------------------------------
+    // Vertical Road
+    // ------------------------------------------
 
-    verticalRoad.position.set(0, 0, 0);
+    const verticalRoad = this.roadGenerator.createVerticalRoad(
+      CityBlock.DEPTH,
+    );
 
-    verticalRoad.userData.isRoad = true;
-    verticalRoad.userData.direction = "vertical";
+    verticalRoad.group.position.set(0, 0, 0);
 
-    /**
-     * Road افقی.
-     */
+    this.roads.push(verticalRoad);
+
+    // ------------------------------------------
+    // Horizontal Road
+    // ------------------------------------------
+
     const horizontalRoad = this.roadGenerator.createHorizontalRoad(
       CityBlock.WIDTH,
     );
 
-    horizontalRoad.position.set(0, 0, 0);
+    horizontalRoad.group.position.set(0, 0, 0);
 
-    horizontalRoad.userData.isRoad = true;
-    horizontalRoad.userData.direction = "horizontal";
+    this.roads.push(horizontalRoad);
 
-    /**
-     * اضافه‌کردن Roadها.
-     */
-    this.group.add(verticalRoad);
-    this.group.add(horizontalRoad);
+    // اضافه کردن Roadها به CityBlock
+    this.group.add(
+      verticalRoad.group,
+      horizontalRoad.group,
+    );
 
-    /**
-     * Intersection دقیقاً در مرکز Block.
-     */
+    // ------------------------------------------
+    // Central Intersection
+    // ------------------------------------------
+
     this.intersection.group.position.set(0, 0, 0);
 
-    /**
-     * اضافه‌کردن Intersection.
-     */
     this.group.add(this.intersection.group);
   }
 
+  // ==========================================
+  // Road Access
+  // ==========================================
+
   /**
-   * منتظر آماده‌شدن کامل Block می‌ماند.
+   * Roadهای فعال این CityBlock را برمی‌گرداند.
    *
-   * ChunkManager از این متد استفاده می‌کند.
+   * Roadها مستقل هستند و نباید merge شوند،
+   * چون Traffic به آن‌ها نیاز دارد.
    */
+  public getRoads(): readonly Road[] {
+    return this.roads;
+  }
+
+  // ==========================================
+  // Plot Layout Selection
+  // ==========================================
+
+  private getPlotLayout(): readonly PlotLayout[] {
+    switch (this.buildingType) {
+      case "suburban":
+        return CityBlock.VILLA_LAYOUT;
+
+      case "commercial":
+        return CityBlock.APARTMENT_LAYOUT;
+
+      case "industrial":
+        return CityBlock.INDUSTRIAL_LAYOUT;
+
+      default:
+        return CityBlock.VILLA_LAYOUT;
+    }
+  }
+
+  // ==========================================
+  // Ready State
+  // ==========================================
+
   public async waitUntilReady(): Promise<void> {
     await this.readyPromise;
   }
 
-  /**
-   * آیا Block آماده استفاده است؟
-   */
   public isReady(): boolean {
     return this.ready;
   }
 
-  /**
-   * ساخت تمام Plotهای Block.
-   *
-   * Plotها موازی Load می‌شوند تا ساخت Chunk
-   * بیش از حد منتظر یک ساختمان نماند.
-   */
+  // ==========================================
+  // Create Plots
+  // ==========================================
+
   private async createPlots(): Promise<void> {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
+
+    const layouts = this.getPlotLayout();
 
     /**
-     * هر Plot مستقل ساخته می‌شود.
+     * تمام Plotهای یک Block به صورت asynchronous
+     * ساخته می‌شوند.
      */
-    const plotPromises = CityBlock.PLOT_LAYOUT.map(async (layout) => {
-      if (this.disposed) {
-        return;
-      }
+    const plotPromises = layouts.map(async (layout) => {
+      if (this.disposed) return;
 
       try {
-        /**
-         * تعیین نوع واقعی BuildingFactory.
-         *
-         * Villa:
-         * suburban
-         *
-         * Apartment:
-         * commercial
-         *
-         * Commercial:
-         * commercial
-         *
-         * Industrial:
-         * industrial
-         */
-        const resolvedBuildingType = this.resolveBuildingType(layout.role);
+        // تعیین نوع واقعی ساختمان
+        const resolvedBuildingType =
+          this.resolveBuildingType(layout.role);
 
-        /**
-         * تعیین نوع ساختمان مسکونی.
-         *
-         * فقط Villa و Apartment ساختمان Residential
-         * محسوب می‌شوند.
-         */
+        // تعیین نوع ساختمان مسکونی
         const residentialKind: ResidentialBuildingKind =
-          layout.role === "apartment" ? "apartment" : "villa";
+          layout.role === "apartment"
+            ? "apartment"
+            : "villa";
 
-        /**
-         * ساخت Plot.
-         *
-         * توجه:
-         * حصار اینجا ساخته نمی‌شود.
-         *
-         * PlotGenerator مسئول ساخت حصار در محدوده
-         * داخلی Plot است.
-         */
+        // ساخت Plot
         const plot = await this.plotGenerator.createPlot(
           CityBlock.PLOT_WIDTH,
           CityBlock.PLOT_DEPTH,
@@ -403,72 +348,84 @@ export class CityBlock {
           layout.apartmentHasGreenArea ?? false,
         );
 
-        /**
-         * ممکن است هنگام Load مدل،
-         * Block dispose شده باشد.
-         */
-        if (this.disposed) {
-          return;
-        }
+        // ممکن است در زمان await، Block dispose شده باشد.
+        if (this.disposed) return;
 
-        /**
-         * Metadata Plot.
-         */
+        // ==========================================
+        // Plot Metadata
+        // ==========================================
+
         plot.userData.isPlot = true;
         plot.userData.plotRole = layout.role;
         plot.userData.buildingType = resolvedBuildingType;
 
-        /**
-         * Residential بودن Plot.
-         */
         const isResidential =
-          layout.role === "villa" || layout.role === "apartment";
+          layout.role === "villa" ||
+          layout.role === "apartment";
 
         plot.userData.isResidential = isResidential;
 
-        /**
-         * نوع ساختمان Residential.
-         */
+        // ------------------------------------------
+        // Residential Metadata
+        // ------------------------------------------
+
         if (isResidential) {
-          plot.userData.residentialKind = layout.role;
+          plot.userData.residentialKind =
+            residentialKind;
+
+          // برای سیستم انتخاب ساختمان در آینده
+          plot.userData.isClickable = true;
         }
 
-        /**
-         * وضعیت Green Area Apartment.
-         */
+        // ------------------------------------------
+        // Apartment Metadata
+        // ------------------------------------------
+
         if (layout.role === "apartment") {
-          plot.userData.hasGreenArea = layout.apartmentHasGreenArea ?? false;
+          plot.userData.hasGreenArea =
+            layout.apartmentHasGreenArea ?? false;
+
+          plot.userData.isApartmentGroupMember = true;
+          plot.userData.apartmentGroup =
+            "apartment-neighborhood";
         }
 
-        /**
-         * موقعیت Plot.
-         *
-         * این موقعیت‌ها طوری محاسبه شده‌اند که
-         * Plot دقیقاً داخل محدوده خودش بماند.
-         *
-         * بنابراین:
-         *
-         * Road
-         *   ↓
-         * Sidewalk
-         *   ↓
-         * Plot
-         *   ↓
-         * Fence / Building
-         *
-         * و حصار وارد پیاده‌رو نمی‌شود.
-         */
-        plot.position.set(layout.x, 0, layout.z);
+        // ------------------------------------------
+        // Villa Metadata
+        // ------------------------------------------
+
+        if (layout.role === "villa") {
+          plot.userData.isVillaPlot = true;
+        }
+
+        // ==========================================
+        // Plot Position
+        // ==========================================
+
+        plot.position.set(
+          layout.x,
+          0,
+          layout.z,
+        );
 
         /**
-         * اضافه‌کردن Plot به Block.
+         * Rotation را مستقیم تنظیم می‌کنیم.
+         *
+         * در نسخه قبلی از *= استفاده شده بود که
+         * برای objectهای reuse شده می‌توانست Rotation
+         * قبلی را دوباره وارد محاسبه کند.
          */
+        plot.rotation.y = layout.rotation;
+
+        // اعمال تنوع ساختمان
+        this.applyBuildingVariation(
+          plot,
+          layout,
+        );
+
+        // اضافه کردن Plot به CityBlock
         this.group.add(plot);
       } catch (error) {
-        /**
-         * شکست یک Plot نباید باعث شود
-         * کل Block برای همیشه Loading بماند.
-         */
         console.error(
           `[CityBlock] Failed to create ${layout.role} plot:`,
           error,
@@ -476,165 +433,187 @@ export class CityBlock {
       }
     });
 
-    /**
-     * منتظر تمام Plotها می‌مانیم.
-     */
+    // صبر برای تکمیل تمام Plotها
     await Promise.all(plotPromises);
 
-    /**
-     * اگر Block هنوز وجود دارد،
-     * آن را آماده اعلام می‌کنیم.
-     */
     if (!this.disposed) {
       this.ready = true;
     }
   }
 
-  /**
-   * تبدیل PlotRole به BuildingType.
-   *
-   * BuildingFactory فعلاً سه نوع اصلی دارد:
-   *
-   * - suburban
-   * - commercial
-   * - industrial
-   *
-   * Mapping فعلی:
-   *
-   * Villa      → suburban
-   * Apartment  → commercial
-   * Shop       → commercial
-   * Hospital   → commercial
-   * Factory    → industrial
-   */
-  private resolveBuildingType(role: PlotRole): BuildingType {
+  // ==========================================
+  // Building Variation
+  // ==========================================
+
+  private applyBuildingVariation(
+    plot: THREE.Group,
+    layout: PlotLayout,
+  ): void {
+    let building: THREE.Object3D | undefined;
+
+    /**
+     * پیدا کردن Building مستقل داخل Plot.
+     *
+     * ساختمان‌ها merge نمی‌شوند تا در آینده
+     * قابلیت انتخاب و تعامل مستقل داشته باشند.
+     */
+    plot.traverse((object) => {
+      if (
+        building === undefined &&
+        object.userData.isBuilding === true
+      ) {
+        building = object;
+      }
+    });
+
+    if (!building) return;
+
+    const buildingObject = building;
+
+    // ==========================================
+    // Building Offset
+    // ==========================================
+
+    /**
+     * عمداً رفتار نسخه قبلی حفظ شده است.
+     *
+     * مقدار position فعلی ساختمان در offset
+     * ضرب می‌شود.
+     *
+     * این بخش را برای حفظ دقیق ظاهر فعلی
+     * شهر تغییر نمی‌دهیم.
+     */
+    buildingObject.position.x *=
+      layout.buildingOffsetX ?? 0;
+
+    buildingObject.position.z *=
+      layout.buildingOffsetZ ?? 0;
+
+    // ==========================================
+    // Building Scale
+    // ==========================================
+
+    /**
+     * Scale نیز عمداً با multiplyScalar انجام می‌شود.
+     *
+     * این نکته مهم است چون Building ممکن است
+     * قبل از رسیدن به این مرحله Scale پایه داشته باشد.
+     *
+     * استفاده از scale.set(...) می‌تواند Scale
+     * اصلی Building را از بین ببرد و باعث کوچک شدن
+     * خانه‌ها شود.
+     */
+    if (layout.buildingScale !== undefined) {
+      const relativeScale =
+        layout.buildingScale / 4;
+
+      buildingObject.scale.multiplyScalar(
+        relativeScale,
+      );
+    }
+
+    // ==========================================
+    // Building Rotation
+    // ==========================================
+
+    buildingObject.rotation.set(
+      0,
+      0,
+      0,
+    );
+
+    // ==========================================
+    // Building Metadata
+    // ==========================================
+
+    buildingObject.userData.blockOffsetX =
+      layout.buildingOffsetX ?? 0;
+
+    buildingObject.userData.blockOffsetZ =
+      layout.buildingOffsetZ ?? 0;
+
+    buildingObject.userData.blockScale =
+      layout.buildingScale ?? 4;
+  }
+
+  // ==========================================
+  // Resolve Building Type
+  // ==========================================
+
+  private resolveBuildingType(
+    role: PlotRole,
+  ): BuildingType {
     switch (role) {
-      /**
-       * 🏠 Villa
-       */
       case "villa":
         return "suburban";
 
-      /**
-       * 🏢 Apartment
-       *
-       * طبق تصمیم فعلی پروژه:
-       * Apartment از مدل‌های Commercial استفاده می‌کند.
-       */
       case "apartment":
         return "commercial";
 
-      /**
-       * 🏪 Commercial
-       */
       case "commercial":
         return "commercial";
 
-      /**
-       * 🏥 Hospital
-       *
-       * فعلاً مدل مستقل Hospital نداریم،
-       * بنابراین Commercial استفاده می‌شود.
-       */
       case "hospital":
         return "commercial";
 
-      /**
-       * 🏭 Industrial
-       */
       case "industrial":
         return "industrial";
 
-      /**
-       * 🌳 Park
-       *
-       * Park ساختمان ندارد، اما مقدار معتبر
-       * برای API برمی‌گردانیم.
-       */
       case "park":
         return "suburban";
 
-      /**
-       * Fallback امن.
-       */
       default:
         return "suburban";
     }
   }
 
-  /**
-   * عرض Block.
-   */
+  // ==========================================
+  // Dimensions
+  // ==========================================
+
   public getWidth(): number {
     return CityBlock.WIDTH;
   }
 
-  /**
-   * عمق Block.
-   */
   public getDepth(): number {
     return CityBlock.DEPTH;
   }
 
-  /**
-   * Update.
-   *
-   * Blockها در حالت عادی Static هستند.
-   *
-   * بنابراین هیچ پردازش غیرضروری در هر Frame
-   * انجام نمی‌دهیم.
-   *
-   * این موضوع برای شهر Infinite بسیار مهم است.
-   */
+  // ==========================================
+  // Update
+  // ==========================================
+
   public update(_deltaTime: number): void {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
 
     /**
-     * فعلاً عمدی خالی است.
+     * فعلاً CityBlock منطق Update مستقلی ندارد.
      *
-     * Animation یا رفتارهای متحرک بعداً باید
-     * فقط برای Objectهایی که واقعاً نیاز دارند
-     * فعال شوند.
+     * Traffic و Roadها در سیستم‌های مربوط
+     * به خودشان مدیریت می‌شوند.
      */
   }
 
-  /**
-   * Dispose کردن Block.
-   */
+  // ==========================================
+  // Dispose
+  // ==========================================
+
   public dispose(): void {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
 
-    /**
-     * ابتدا وضعیت Dispose را فعال می‌کنیم
-     * تا عملیات Async جدید چیزی به Block اضافه نکنند.
-     */
     this.disposed = true;
-
-    /**
-     * Block دیگر آماده استفاده نیست.
-     */
     this.ready = false;
 
-    /**
-     * Dispose کردن PlotGenerator.
-     *
-     * این کار NatureManagerهای متعلق به Plotها
-     * را نیز مدیریت می‌کند.
-     */
+    // پاک‌سازی PlotGenerator
     this.plotGenerator.dispose();
 
-    /**
-     * Dispose کردن Intersection.
-     */
+    // پاک‌سازی Intersection
     this.intersection.dispose();
 
-    /**
-     * حذف Object3Dهای Block.
-     */
+    // پاک کردن referenceهای Road
+    this.roads.length = 0;
+
+    // پاک کردن Objectهای داخل CityBlock
     this.group.clear();
   }
 }
